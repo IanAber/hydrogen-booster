@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  .phase-pill {
+    padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  main { padding: 20px 24px; max-width: 520px; margin: 0 auto; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input[type=number], input[type=tel] {
+    width: 100%; padding: 12px 12px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 18px; font-variant-numeric: tabular-nums;
+  }
+  input[type=tel] { letter-spacing: .12em; }
+  input:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* --- Gauge card -------------------------------------------------- */
+  .gauge-card { text-align: center; }
+  .gauge-status { display: flex; justify-content: center; margin-bottom: 16px; }
+  .gauge {
+    display: inline-flex; align-items: flex-end; justify-content: center; gap: 3px;
+    background: #0a0a0a; border: 5px solid #38424c; border-radius: 8px;
+    padding: 12px 16px; box-shadow: inset 0 3px 10px rgba(0,0,0,.7), 0 2px 4px rgba(0,0,0,.4);
+  }
+  .reel {
+    width: 30px; height: 44px; overflow: hidden; position: relative; border-radius: 3px;
+    background: linear-gradient(#000 0%, #262626 10%, #3a3a3a 48%, #262626 88%, #000 100%);
+    box-shadow: inset 0 0 5px rgba(0,0,0,.85);
+  }
+  .reel-strip { display: flex; flex-direction: column; transition: transform .35s cubic-bezier(.4,0,.2,1); }
+  .reel .digit {
+    height: 44px; display: flex; align-items: center; justify-content: center;
+    font-family: "Courier New", monospace; font-weight: 700; font-size: 28px;
+    color: #f5f1e6; text-shadow: 0 1px 1px rgba(0,0,0,.6);
+  }
+  .gauge-decimal {
+    font-family: "Courier New", monospace; font-weight: 700; font-size: 30px;
+    color: #f5f1e6; padding: 0 1px 6px; align-self: flex-end;
+  }
+  .gauge-unit { color: var(--muted); font-size: 12px; margin-top: 12px; letter-spacing: .1em; text-transform: uppercase; }
+
+  /* --- Job setup ---------------------------------------------------- */
+  .nozzle-group, .preset-group { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .nozzle-group button, .preset-group button {
+    flex: 1; min-width: 44px; padding: 12px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); cursor: pointer; font-size: 15px; font-weight: 600;
+  }
+  .nozzle-group button.selected, .preset-group button.selected {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+  button.primary, button.danger, button.warnbtn {
+    flex: 1; padding: 14px; border-radius: 6px; border: none; font-size: 16px;
+    font-weight: 700; cursor: pointer;
+  }
+  button.primary { background: var(--good); color: #06210f; }
+  button.danger { background: var(--bad); color: #2a0505; }
+  button.warnbtn { background: var(--warn); color: #2a1e00; }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  .code-row { display: flex; gap: 8px; }
+  .code-row input { flex: 1; }
+  button.secondary {
+    padding: 0 16px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .welcome { color: var(--good); font-size: 14px; font-weight: 600; margin-top: 8px; min-height: 18px; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 12px; min-height: 16px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 8px 0;
+    border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<main>
+
+  <div class="card gauge-card">
+    <div class="gauge-status"><div id="phasePill" class="phase-pill">--</div></div>
+    <div class="gauge" id="gauge"></div>
+    <div class="gauge-unit" data-i18n="cust_kg_dispensed">kg dispensed</div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="idx_job_setup">Job Setup</h2>
+
+    <label data-i18n="idx_nozzle">Nozzle</label>
+    <div class="nozzle-group">
+      <button id="nozzle350" onclick="selectNozzle(350)">350 Bar</button>
+      <button id="nozzle700" onclick="selectNozzle(700)">700 Bar</button>
+    </div>
+
+    <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
+    <input type="number" id="targetPressure" min="1" step="1" value="350">
+
+    <label data-i18n="cust_amount">Amount (kg)</label>
+    <div class="preset-group">
+      <button onclick="selectPreset(0.5)" data-preset="0.5">0.5</button>
+      <button onclick="selectPreset(1)" data-preset="1">1</button>
+      <button onclick="selectPreset(2)" data-preset="2">2</button>
+      <button onclick="selectPreset(3)" data-preset="3">3</button>
+      <button onclick="selectPreset(4)" data-preset="4">4</button>
+      <button onclick="selectPreset(5)" data-preset="5">5</button>
+    </div>
+    <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0" oninput="onMassInput()">
+
+    <label for="customerCode" data-i18n="cust_code_label">Your phone number / code</label>
+    <div class="code-row">
+      <input type="password" id="customerCode" maxlength="10" inputmode="numeric" pattern="[0-9]*"
+        placeholder="0000000000" oninput="onCodeInput()">
+      <button type="button" id="toggleCodeBtn" class="secondary" onclick="toggleCodeVisibility()" data-i18n="cust_show_code">Show</button>
+    </div>
+    <div class="hint" data-i18n="cust_code_hint">Enter your phone number or a code up to 10 digits to enable Start.</div>
+    <div class="welcome" id="welcomeMsg"></div>
+
+    <div class="actions">
+      <button class="primary" id="startBtn" onclick="startJob()" data-i18n="idx_start" disabled>Start</button>
+      <button class="warnbtn" id="fillPressureBtn" onclick="fillToPressure()" data-i18n="cust_fill_to_pressure" disabled>Fill to pressure</button>
+    </div>
+    <div class="actions">
+      <button class="danger" id="stopBtn" onclick="stopJob()" data-i18n="idx_stop" disabled>Stop</button>
+    </div>
+    <div class="error" id="errorMsg"></div>
+  </div>
+
+  <div class="card">
+    <div class="stat-row"><span data-i18n="idx_output_pressure">Output pressure</span><span class="val" id="outP">-- bar</span></div>
+    <div class="stat-row"><span data-i18n="idx_elapsed">Elapsed</span><span class="val" id="elapsedVal">--</span></div>
+  </div>
+
+</main>
+
+<script>
+// --- Rolling odometer gauge ------------------------------------------
+// A classic mechanical fuel-pump counter: each digit is a vertical reel
+// of glyphs 0-9 (repeated a few times) behind a one-glyph window: moving
+// it up (translateY negative) makes the digit appear to roll upward, the
+// same way a real pump/odometer counter advances. Since the value it
+// tracks (delivered mass) only ever increases during a fill, every digit
+// only ever needs to roll forward - the shortest forward distance to the
+// new digit is always the physically correct one. The strip repeats
+// 0-9 three times so it can be silently "rebased" backward by a whole
+// multiple of 10 (which looks identical) whenever it's about to run out
+// of headroom - always done with the CSS transition switched off first,
+// in the same synchronous call, so the rebase itself is never painted.
+class RollingGauge {
+  constructor(container, intDigits, fracDigits) {
+    this.container = container;
+    this.intDigits = intDigits;
+    this.fracDigits = fracDigits;
+    this.digitHeight = 44;
+    this.cycles = 3;
+    this.reels = [];
+    this.positions = [];
+    this.build();
+  }
+
+  build() {
+    this.container.innerHTML = '';
+    const total = this.intDigits + this.fracDigits;
+    for (let i = 0; i < total; i++) {
+      if (i === this.intDigits) {
+        const dot = document.createElement('div');
+        dot.className = 'gauge-decimal';
+        dot.textContent = '.';
+        this.container.appendChild(dot);
+      }
+      const reel = document.createElement('div');
+      reel.className = 'reel';
+      const strip = document.createElement('div');
+      strip.className = 'reel-strip';
+      for (let c = 0; c < this.cycles; c++) {
+        for (let d = 0; d <= 9; d++) {
+          const el = document.createElement('div');
+          el.className = 'digit';
+          el.textContent = String(d);
+          strip.appendChild(el);
+        }
+      }
+      reel.appendChild(strip);
+      this.container.appendChild(reel);
+      this.reels.push(strip);
+      this.positions.push(0);
+    }
+  }
+
+  setDigits(digits) {
+    const maxIndex = this.cycles * 10 - 1;
+    digits.forEach((targetDigit, i) => {
+      const strip = this.reels[i];
+      const currentDigit = ((this.positions[i] % 10) + 10) % 10;
+      let delta = targetDigit - currentDigit;
+      if (delta < 0) delta += 10;
+
+      if (this.positions[i] + delta > maxIndex - 10) {
+        const base = this.positions[i] % 10;
+        strip.style.transition = 'none';
+        this.positions[i] = base;
+        strip.style.transform = `translateY(-${base * this.digitHeight}px)`;
+        void strip.offsetHeight; // force reflow so the jump above never animates
+        strip.style.transition = '';
+      }
+
+      if (delta === 0) return;
+      this.positions[i] += delta;
+      strip.style.transform = `translateY(-${this.positions[i] * this.digitHeight}px)`;
+    });
+  }
+
+  update(value) {
+    const max = Math.pow(10, this.intDigits) - Math.pow(10, -this.fracDigits);
+    const clamped = Math.max(0, Math.min(max, value || 0));
+    const [intPart, fracPart] = clamped.toFixed(this.fracDigits).split('.');
+    const digitsStr = intPart.padStart(this.intDigits, '0') + fracPart;
+    this.setDigits(digitsStr.split('').map(Number));
+  }
+
+  reset() {
+    this.positions = this.positions.map(() => 0);
+    this.reels.forEach(strip => {
+      strip.style.transition = 'none';
+      strip.style.transform = 'translateY(0px)';
+      void strip.offsetHeight;
+      strip.style.transition = '';
+    });
+  }
+}
+
+const gauge = new RollingGauge(document.getElementById('gauge'), 2, 3);
+let lastMass = 0;
+
+// --- Job setup ---------------------------------------------------------
+
+let selectedNozzle = 350;
+
+function selectNozzle(n) {
+  selectedNozzle = n;
+  document.getElementById('nozzle350').classList.toggle('selected', n === 350);
+  document.getElementById('nozzle700').classList.toggle('selected', n === 700);
+  // Customers don't reason in bar - syncing this to the nozzle keeps
+  // the (still-editable, for staff filling in on someone's behalf)
+  // pressure field sane by default.
+  document.getElementById('targetPressure').value = n;
+}
+selectNozzle(350);
+
+function selectPreset(kg) {
+  document.getElementById('targetMass').value = kg;
+  document.querySelectorAll('.preset-group button').forEach(b => {
+    b.classList.toggle('selected', parseFloat(b.dataset.preset) === kg);
+  });
+}
+function onMassInput() {
+  const v = parseFloat(document.getElementById('targetMass').value);
+  document.querySelectorAll('.preset-group button').forEach(b => {
+    b.classList.toggle('selected', parseFloat(b.dataset.preset) === v);
+  });
+}
+selectPreset(1);
+
+// --- Customer code: hidden by default, live-looked-up against the
+// admin-maintained allow-list as it's typed so Start only enables for a
+// recognised code, and a welcome message confirms who it'll be recorded
+// against before they commit.
+
+let codeShowing = false;
+
+function toggleCodeVisibility() {
+  codeShowing = !codeShowing;
+  document.getElementById('customerCode').type = codeShowing ? 'text' : 'password';
+  document.getElementById('toggleCodeBtn').textContent = t(codeShowing ? 'cust_hide_code' : 'cust_show_code');
+}
+
+let codeLookupValid = false;
+let codeLookupTimer = null;
+
+function onCodeInput() {
+  const el = document.getElementById('customerCode');
+  el.value = el.value.replace(/[^0-9]/g, '').slice(0, 10);
+
+  codeLookupValid = false;
+  document.getElementById('welcomeMsg').textContent = '';
+  updateButtonStates();
+
+  clearTimeout(codeLookupTimer);
+  const code = el.value;
+  if (!/^[0-9]{1,10}$/.test(code)) return;
+  codeLookupTimer = setTimeout(() => lookupCode(code), 300);
+}
+
+async function lookupCode(code) {
+  try {
+    const res = await fetch('/api/lookup-code', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ code }),
+    });
+    const result = await res.json();
+    // The field may have changed (or been cleared) while this request
+    // was in flight - only apply a still-relevant result.
+    if (document.getElementById('customerCode').value !== code) return;
+
+    const welcomeEl = document.getElementById('welcomeMsg');
+    if (result.valid) {
+      codeLookupValid = true;
+      welcomeEl.textContent = t('cust_welcome') + (result.name ? ', ' + result.name : '') + '!';
+      welcomeEl.style.color = 'var(--good)';
+    } else {
+      codeLookupValid = false;
+      welcomeEl.textContent = t('cust_code_not_found');
+      welcomeEl.style.color = 'var(--bad)';
+    }
+    updateButtonStates();
+  } catch (e) {
+    // Leave codeLookupValid as-is (Start stays disabled) rather than
+    // guess; the operator can just try again.
+  }
+}
+
+let jobRunning = false;
+
+function codeValid() {
+  return codeLookupValid;
+}
+
+function updateButtonStates() {
+  const canStart = codeValid() && !jobRunning;
+  document.getElementById('startBtn').disabled = !canStart;
+  document.getElementById('fillPressureBtn').disabled = !canStart;
+  document.getElementById('stopBtn').disabled = !jobRunning;
+
+  // Lock every other control while a fill is in progress, leaving only
+  // Stop available - nozzle, amount, code, etc. shouldn't be changeable
+  // out from under a job that's already running.
+  document.getElementById('nozzle350').disabled = jobRunning;
+  document.getElementById('nozzle700').disabled = jobRunning;
+  document.getElementById('targetPressure').disabled = jobRunning;
+  document.getElementById('targetMass').disabled = jobRunning;
+  document.getElementById('customerCode').disabled = jobRunning;
+  document.getElementById('toggleCodeBtn').disabled = jobRunning;
+  document.querySelectorAll('.preset-group button').forEach(b => { b.disabled = jobRunning; });
+
+  // Once a fill starts, the code has already done its job (identifying
+  // who it's for) - hide it again regardless of how it was left, rather
+  // than leave it sitting on screen in plain text for the fill duration.
+  if (jobRunning && codeShowing) toggleCodeVisibility();
+}
+updateButtonStates();
+
+async function postStart(body) {
+  document.getElementById('errorMsg').textContent = '';
+  const res = await fetch('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!res.ok) {
+    document.getElementById('errorMsg').textContent = await res.text();
+  }
+}
+
+async function startJob() {
+  await postStart({
+    targetPressureBar: parseFloat(document.getElementById('targetPressure').value),
+    targetMassKg: parseFloat(document.getElementById('targetMass').value),
+    nozzle: selectedNozzle,
+    customerCode: document.getElementById('customerCode').value,
+  });
+}
+
+// "Fill to pressure" ignores the kg field entirely: target pressure is
+// the selected nozzle's rated maximum, and target mass is set to a cap
+// far above anything the tank could ever hold, so the fill only ever
+// stops on reaching that pressure (or Stop).
+async function fillToPressure() {
+  await postStart({
+    targetPressureBar: selectedNozzle,
+    targetMassKg: 999,
+    nozzle: selectedNozzle,
+    customerCode: document.getElementById('customerCode').value,
+  });
+}
+
+async function stopJob() {
+  await fetch('/api/stop', { method: 'POST' });
+}
+
+const phaseColors = {
+  idle: '#26323b', filling: 'var(--accent)', venting: 'var(--warn)',
+  complete: 'var(--good)', fault: 'var(--bad)'
+};
+const phaseKeys = {
+  idle: 'phase_idle', filling: 'phase_filling', venting: 'phase_venting',
+  complete: 'phase_complete', fault: 'phase_fault'
+};
+
+function fmt(n, d=1) { return (typeof n === 'number') ? n.toFixed(d) : '--'; }
+
+async function poll() {
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+
+    const pill = document.getElementById('phasePill');
+    pill.textContent = t(phaseKeys[s.phase] || s.phase);
+    pill.style.background = phaseColors[s.phase] || '#26323b';
+    pill.style.color = (s.phase === 'idle') ? 'var(--text)' : '#08131c';
+
+    document.getElementById('outP').textContent = fmt(s.outputPressureBar) + ' bar';
+    document.getElementById('elapsedVal').textContent = s.startedAt ? fmt(s.elapsedSec, 0) + ' s' : '--';
+
+    const mass = s.deliveredMassKg || 0;
+    if (mass < lastMass - 0.001) gauge.reset();
+    lastMass = mass;
+    gauge.update(mass);
+
+    jobRunning = (s.phase === 'filling' || s.phase === 'venting');
+    updateButtonStates();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+initI18n().then(() => {
+  document.title = t('idx_page_title');
+  setInterval(poll, 500);
+  poll();
+});
+</script>
+
+</body>
+</html>

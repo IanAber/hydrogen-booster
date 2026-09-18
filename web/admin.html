@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster - Admin Configuration</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header a { color: var(--muted); font-size: 13px; text-decoration: none; }
+  main { padding: 20px 24px; max-width: 1000px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 4px; }
+  .card .hint { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  .field .unit { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  input[type=number] {
+    width: 100%; padding: 8px 10px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 14px;
+  }
+  input[type=text], select {
+    width: 100%; padding: 8px 10px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 14px;
+  }
+  #canChannelRows td, #tempChannelRows td, #relayChannelRows td { padding: 4px 4px; }
+  #canChannelRows input[type=number], #relayChannelRows input[type=number] { padding: 5px 6px; font-size: 13px; }
+  #canChannelRows input[type=checkbox], #tempChannelRows input[type=checkbox], #relayChannelRows input[type=checkbox] {
+    width: 16px; height: 16px; accent-color: var(--accent);
+  }
+  #tempChannelRows select, #relayChannelRows select { padding: 5px 6px; font-size: 13px; }
+  #relayChannelRows input[type=number] { width: 80px; }
+  .reading-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .reading-row:last-child { border-bottom: none; }
+  .reading-row .ch-name { width: 150px; font-size: 13px; color: var(--text); font-weight: 600; }
+  .reading-row .ch-raw { width: 90px; font-size: 12px; color: var(--muted); }
+  .reading-row .ch-bar { width: 90px; font-size: 14px; font-weight: 600; }
+  .reading-row input[type=number] { width: 110px; }
+  .comms-ok { color: var(--good); }
+  .comms-bad { color: var(--bad); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .actions { position: sticky; bottom: 0; background: var(--bg); padding: 16px 0;
+    display: flex; gap: 12px; align-items: center; border-top: 1px solid var(--border); margin-top: 4px; }
+  button {
+    padding: 12px 20px; border-radius: 6px; border: none; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #06131f; }
+  button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  #msg { font-size: 13px; }
+  #msg.ok { color: var(--good); }
+  #msg.err { color: var(--bad); }
+  .stage-name { font-size: 13px; color: var(--text); font-weight: 600; margin-bottom: 10px; }
+  .note {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.5;
+  }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="admin_page_title">Admin / Configuration</h1>
+  <div style="display:flex; align-items:center; gap:16px;">
+    <a href="/diagnostics.html" data-i18n="admin_diagnostics_link">Diagnostics</a>
+    <a href="/operator.html">&larr; <span data-i18n="admin_back_dashboard">Back to dashboard</span></a>
+  </div>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 data-i18n="admin_system_branding">System Branding</h2>
+    <div class="field"><label data-i18n="admin_system_name_label">System name (shown in the banner on every page)</label>
+      <input type="text" id="systemName" placeholder="Hydrogen Booster"></div>
+    <div class="field"><label data-i18n="admin_language_label">Language</label>
+      <select id="languageSelect" onchange="onLanguageChange(this.value)">
+        <option value="en">English</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
+        <option value="de">Deutsch</option>
+        <option value="pt">Português</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_change_password">Change Admin Password</h2>
+    <p class="hint" data-i18n="admin_change_password_hint">Applies immediately...</p>
+    <div class="field"><label data-i18n="admin_current_password">Current password</label>
+      <input type="password" id="currentPassword" autocomplete="current-password"></div>
+    <div class="field"><label data-i18n="admin_new_password">New password (min 8 characters)</label>
+      <input type="password" id="newPassword" autocomplete="new-password"></div>
+    <div class="field"><label data-i18n="admin_confirm_password">Confirm new password</label>
+      <input type="password" id="confirmPassword" autocomplete="new-password"></div>
+    <button class="primary" onclick="changePassword()" data-i18n="admin_change_password_btn" style="width:100%;">Change Password</button>
+    <div id="passwordMsg" style="margin-top:10px; font-size:13px;"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_valid_codes">Valid Customer Codes</h2>
+    <p class="hint" data-i18n="admin_valid_codes_hint">One customer per line, as "code,Full Name". A customer's code must be listed here before a fill can start on the public screen.</p>
+    <textarea id="validCodesText" rows="8" spellcheck="false"
+      style="width:100%; padding:8px 10px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; font-family:ui-monospace, monospace; resize:vertical;"
+      placeholder="5551234567,Jane Doe"></textarea>
+    <div style="display:flex; gap:12px; align-items:center; margin-top:10px;">
+      <button class="primary" onclick="saveCodes()" data-i18n="admin_save_codes">Save Codes</button>
+      <button class="secondary" onclick="loadCodes()" data-i18n="admin_reload">Reload from server</button>
+      <span id="codesMsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_dispense_records">Dispense Records</h2>
+    <p class="hint" data-i18n="admin_dispense_records_hint">Fetching clears the stored records - intended for a billing/accounting system to poll periodically.</p>
+    <button class="primary" onclick="fetchRecords()" data-i18n="admin_fetch_records_btn">Fetch &amp; Clear Records</button>
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:14px;">
+      <thead>
+        <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;" data-i18n="admin_record_time">Time</th>
+          <th style="padding:6px 4px;" data-i18n="admin_record_code">Customer Code</th>
+          <th style="padding:6px 4px;" data-i18n="admin_record_mass">Delivered (kg)</th>
+        </tr>
+      </thead>
+      <tbody id="dispenseRecordRows"></tbody>
+    </table>
+    <p class="hint" id="recordsMsg" style="margin-top:10px; margin-bottom:0;"></p>
+  </div>
+
+  <div class="note">
+    <span data-i18n="admin_note">Changes here apply immediately...</span>
+    <code id="configPath">&hellip;</code>. <span data-i18n="admin_note_wiring">Wiring note...</span>
+  </div>
+
+  <div class="grid">
+
+    <div class="card">
+      <h2 data-i18n="admin_stage1_timing">Stage 1 (A/B) Timing</h2>
+      <p class="hint" id="s1name">&nbsp;</p>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_min_stroke_time">Min stroke time</span><span class="unit">ms</span></label>
+          <input type="number" id="s1min" min="0" step="10"></div>
+        <div class="field"><label><span data-i18n="admin_max_stroke_time">Max stroke time</span><span class="unit">ms</span></label>
+          <input type="number" id="s1max" min="0" step="10"></div>
+      </div>
+      <div class="field"><label><span data-i18n="admin_spike_threshold">Pressure spike threshold</span><span class="unit">bar rise</span></label>
+        <input type="number" id="s1delta" min="0" step="0.5"></div>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_spike_window">Spike detection window</span><span class="unit">ms</span></label>
+          <input type="number" id="s1window" min="0" step="10"></div>
+        <div class="field"><label><span data-i18n="admin_pulse_duration">Pulse valve duration</span><span class="unit">ms</span></label>
+          <input type="number" id="s1pulse" min="0" step="10"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-i18n="admin_stage2_timing">Stage 2 (C/D) Timing</h2>
+      <p class="hint" id="s2name">&nbsp;</p>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_min_stroke_time">Min stroke time</span><span class="unit">ms</span></label>
+          <input type="number" id="s2min" min="0" step="10"></div>
+        <div class="field"><label><span data-i18n="admin_max_stroke_time">Max stroke time</span><span class="unit">ms</span></label>
+          <input type="number" id="s2max" min="0" step="10"></div>
+      </div>
+      <div class="field"><label><span data-i18n="admin_spike_threshold">Pressure spike threshold</span><span class="unit">bar rise</span></label>
+        <input type="number" id="s2delta" min="0" step="0.5"></div>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_spike_window">Spike detection window</span><span class="unit">ms</span></label>
+          <input type="number" id="s2window" min="0" step="10"></div>
+        <div class="field"><label><span data-i18n="admin_pulse_duration">Pulse valve duration</span><span class="unit">ms</span></label>
+          <input type="number" id="s2pulse" min="0" step="10"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-i18n="admin_safety_interlocks">Safety Interlocks</h2>
+      <div class="field"><label><span data-i18n="admin_max_hyd_pressure">Max hydraulic pressure</span><span class="unit">bar</span></label>
+        <input type="number" id="maxHyd" min="0" step="1"></div>
+      <div class="field"><label><span data-i18n="admin_max_h2_pressure">Max hydrogen pressure</span><span class="unit">bar</span></label>
+        <input type="number" id="maxH2" min="0" step="1"></div>
+      <div class="field"><label><span data-i18n="admin_max_temperature">Max temperature</span><span class="unit">&deg;C</span></label>
+        <input type="number" id="maxTemp" min="0" step="1"></div>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_sensor_max_age">Sensor max age</span><span class="unit">ms</span></label>
+          <input type="number" id="sensorAge" min="0" step="100"></div>
+        <div class="field"><label><span data-i18n="admin_max_sync_lead">Max sync stroke lead</span><span class="unit">strokes</span></label>
+          <input type="number" id="syncLead" min="1" step="1"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-i18n="admin_tank_vent">Tank &amp; Vent</h2>
+      <div class="field"><label><span data-i18n="admin_tank_volume">Tank bank volume</span><span class="unit">litres</span></label>
+        <input type="number" id="tankVol" min="0" step="1"></div>
+      <div class="row2">
+        <div class="field"><label><span data-i18n="admin_tank_nominal_pressure">Tank nominal pressure</span><span class="unit">bar</span></label>
+          <input type="number" id="tankP" min="0" step="1"></div>
+        <div class="field"><label><span data-i18n="admin_tank_nominal_temp">Tank nominal temp</span><span class="unit">&deg;C</span></label>
+          <input type="number" id="tankT" step="1"></div>
+      </div>
+      <div class="field"><label><span data-i18n="admin_vent_duration">Vent duration (700 bar completion)</span><span class="unit">ms</span></label>
+        <input type="number" id="ventDur" min="0" step="100"></div>
+      <div class="field"><label><span data-i18n="admin_poll_period">Control loop poll period</span><span class="unit">ms</span></label>
+        <input type="number" id="pollPeriod" min="10" step="10"></div>
+    </div>
+
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_can_module_title">Pressure Input Module (CAN Bus)</h2>
+    <p class="hint" data-i18n="admin_can_module_hint">6-channel 4-20mA pressure input module...</p>
+    <div class="row2">
+      <div class="field"><label data-i18n="admin_can_interface">CAN interface</label><input type="text" id="canIface" placeholder="can0"></div>
+      <div class="field"><label data-i18n="admin_function_code">Function code</label><input type="number" id="canFunc" min="0" max="255"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label data-i18n="admin_request_id">Request ID (hex)</label><input type="text" id="canReqId" placeholder="0x101"></div>
+      <div class="field"><label data-i18n="admin_response_id">Response ID (hex)</label><input type="text" id="canRespId" placeholder="0x001"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label><span data-i18n="admin_can_poll_period">Poll period</span><span class="unit">ms</span></label><input type="number" id="canPoll" min="10" step="10"></div>
+      <div class="field"><label><span data-i18n="admin_response_timeout">Response timeout</span><span class="unit">ms</span></label><input type="number" id="canTimeout" min="10" step="10"></div>
+    </div>
+
+    <label style="display:flex; align-items:center; gap:10px; margin:16px 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="canLive" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_live_data_feed">Live data feed</strong> - <span data-i18n="admin_can_live_hint">hint</span></span>
+    </label>
+
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+      <thead>
+        <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
+          <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
+          <th style="padding:6px 4px;" data-i18n="admin_assigned_to">Assigned to</th>
+          <th style="padding:6px 4px;" data-i18n="admin_low_raw">Low raw</th>
+          <th style="padding:6px 4px;" data-i18n="admin_low_bar">Low bar</th>
+          <th style="padding:6px 4px;" data-i18n="admin_high_raw">High raw</th>
+          <th style="padding:6px 4px;" data-i18n="admin_high_bar">High bar</th>
+        </tr>
+      </thead>
+      <tbody id="canChannelRows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_live_readings_sim">Live Readings / Simulator</h2>
+    <p class="hint" id="canCommsStatus">&nbsp;</p>
+    <div id="canReadings"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_temp_sensors_title">Temperature Sensors (1-Wire / DS18B20)</h2>
+    <p class="hint" data-i18n="admin_temp_sensors_hint">Each row maps a logical temperature reading...</p>
+    <div class="field" style="max-width:220px;">
+      <label><span data-i18n="admin_can_poll_period">Poll period</span><span class="unit">ms</span></label>
+      <input type="number" id="tempPoll" min="1000" step="500">
+    </div>
+
+    <label style="display:flex; align-items:center; gap:10px; margin:16px 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="tempLive" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_live_data_feed">Live data feed</strong> - <span data-i18n="admin_temp_live_hint">hint</span></span>
+    </label>
+
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+      <thead>
+        <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
+          <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
+          <th style="padding:6px 4px;" data-i18n="admin_assigned_to">Assigned to</th>
+          <th style="padding:6px 4px;" data-i18n="admin_onewire_device">1-Wire device</th>
+        </tr>
+      </thead>
+      <tbody id="tempChannelRows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_live_temp_readings">Live Temperature Readings / Simulator</h2>
+    <p class="hint" id="tempCommsStatus">&nbsp;</p>
+    <div id="tempReadings"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_relay_outputs_title">Relay Outputs (MCP23017 GPIO)</h2>
+    <p class="hint" data-i18n="admin_relay_outputs_hint">Each row maps a valve to one port...</p>
+    <div class="field" style="max-width:280px;">
+      <label data-i18n="admin_gpio_chip_device">GPIO chip device</label>
+      <input type="text" id="relayChip" placeholder="/dev/gpiochip16">
+    </div>
+
+    <label style="display:flex; align-items:center; gap:10px; margin:16px 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="relayLive" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_live_outputs">Live outputs</strong> - <span data-i18n="admin_live_outputs_hint">hint</span></span>
+    </label>
+
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+      <thead>
+        <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
+          <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
+          <th style="padding:6px 4px;" data-i18n="admin_valve">Valve</th>
+          <th style="padding:6px 4px;" data-i18n="admin_port">Port (0-15)</th>
+        </tr>
+      </thead>
+      <tbody id="relayChannelRows"></tbody>
+    </table>
+  </div>
+
+  <div class="actions">
+    <button class="primary" onclick="apply(false)" data-i18n="admin_apply">Apply</button>
+    <button class="primary" onclick="apply(true)" style="background:var(--good); color:#06210f;" data-i18n="admin_apply_save">Apply &amp; Save to File</button>
+    <button class="secondary" onclick="load()" data-i18n="admin_reload">Reload from server</button>
+    <span id="msg"></span>
+  </div>
+
+</main>
+
+<script>
+function v(id) { return document.getElementById(id).value; }
+function setv(id, val) { document.getElementById(id).value = val; }
+function num(id) { return parseFloat(v(id)); }
+function int(id) { return parseInt(v(id), 10); }
+
+// Option label functions (not module-level consts) so they pick up the
+// current language whenever a channel-row table is (re)built, including
+// right after a language switch, before Apply/reload.
+function sensorOptions() {
+  return [
+    { value: '', label: t('opt_unused') },
+    { value: 'Hyd1Pressure', label: 'Hyd1Pressure - ' + t('opt_stage1_hydraulic') },
+    { value: 'Hyd2Pressure', label: 'Hyd2Pressure - ' + t('opt_stage2_hydraulic') },
+    { value: 'TankPressure', label: 'TankPressure - ' + t('opt_storage_tank_bank') },
+    { value: 'InterStagePressure', label: 'InterStagePressure - ' + t('opt_between_ab_cd') },
+    { value: 'OutputPressure', label: 'OutputPressure - ' + t('opt_final_delivery') },
+  ];
+}
+
+function tempSensorOptions() {
+  return [
+    { value: '', label: t('opt_unused') },
+    { value: 'Hyd1Temp', label: 'Hyd1Temp - ' + t('opt_stage1_hydraulic') },
+    { value: 'Hyd2Temp', label: 'Hyd2Temp - ' + t('opt_stage2_hydraulic') },
+    { value: 'TankTemp', label: 'TankTemp - ' + t('opt_storage_tank_bank') },
+    { value: 'InterStageTemp', label: 'InterStageTemp - ' + t('opt_between_ab_cd') },
+    { value: 'OutputTemp', label: 'OutputTemp - ' + t('opt_final_delivery') },
+  ];
+}
+
+// Populated from /api/temp/status as sensors are discovered; seeded with
+// whatever's already assigned in the config so a device that's briefly
+// offline doesn't disappear from its row's dropdown.
+let availableOneWireDevices = [];
+
+function buildTempChannelRows(channels) {
+  const tbody = document.getElementById('tempChannelRows');
+  tbody.innerHTML = '';
+  channels.forEach((ch, i) => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+
+    const opts = tempSensorOptions().map(o =>
+      `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
+
+    const deviceIds = new Set(availableOneWireDevices);
+    if (ch.deviceId) deviceIds.add(ch.deviceId);
+    const deviceOptions = [`<option value="">${t('opt_none_selected')}</option>`].concat(
+      Array.from(deviceIds).sort().map(id =>
+        `<option value="${id}" ${id === (ch.deviceId || '') ? 'selected' : ''}>${id}</option>`
+      )
+    ).join('');
+
+    tr.innerHTML = `
+      <td>${i}</td>
+      <td><input type="checkbox" id="tempCh${i}en" ${ch.enabled ? 'checked' : ''}></td>
+      <td><select id="tempCh${i}assigned">${opts}</select></td>
+      <td><select id="tempCh${i}device">${deviceOptions}</select></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function readTempChannelRows() {
+  const rows = [];
+  for (let i = 0; i < 5; i++) {
+    rows.push({
+      enabled: document.getElementById(`tempCh${i}en`).checked,
+      assigned: document.getElementById(`tempCh${i}assigned`).value,
+      deviceId: document.getElementById(`tempCh${i}device`).value,
+    });
+  }
+  return rows;
+}
+
+function valveOptions() {
+  return [
+    { value: '', label: t('opt_unused') },
+    { value: 'Valve1A(dir)', label: 'Valve1A - ' + t('opt_stage1_direction') },
+    { value: 'Valve1B(pulse)', label: 'Valve1B - ' + t('opt_stage1_pulse') },
+    { value: 'Valve2A(dir)', label: 'Valve2A - ' + t('opt_stage2_direction') },
+    { value: 'Valve2B(pulse)', label: 'Valve2B - ' + t('opt_stage2_pulse') },
+    { value: 'VentValve', label: 'VentValve' },
+  ];
+}
+
+function buildRelayChannelRows(channels) {
+  const tbody = document.getElementById('relayChannelRows');
+  tbody.innerHTML = '';
+  channels.forEach((ch, i) => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+
+    const options = valveOptions().map(o =>
+      `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
+
+    tr.innerHTML = `
+      <td>${i}</td>
+      <td><input type="checkbox" id="relayCh${i}en" ${ch.enabled ? 'checked' : ''}></td>
+      <td><select id="relayCh${i}assigned">${options}</select></td>
+      <td><input type="number" id="relayCh${i}port" min="0" max="15" step="1" value="${ch.port}"></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function readRelayChannelRows() {
+  const rows = [];
+  for (let i = 0; i < 5; i++) {
+    rows.push({
+      enabled: document.getElementById(`relayCh${i}en`).checked,
+      assigned: document.getElementById(`relayCh${i}assigned`).value,
+      port: parseInt(document.getElementById(`relayCh${i}port`).value, 10),
+    });
+  }
+  return rows;
+}
+
+function buildCanChannelRows(channels) {
+  const tbody = document.getElementById('canChannelRows');
+  tbody.innerHTML = '';
+  channels.forEach((ch, i) => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+
+    const options = sensorOptions().map(o =>
+      `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
+
+    tr.innerHTML = `
+      <td>${i}</td>
+      <td><input type="checkbox" id="canCh${i}en" ${ch.enabled ? 'checked' : ''}></td>
+      <td><select id="canCh${i}assigned">${options}</select></td>
+      <td><input type="number" id="canCh${i}lowRaw" value="${ch.calLowRaw}" step="1"></td>
+      <td><input type="number" id="canCh${i}lowBar" value="${ch.calLowBar}" step="0.1"></td>
+      <td><input type="number" id="canCh${i}highRaw" value="${ch.calHighRaw}" step="1"></td>
+      <td><input type="number" id="canCh${i}highBar" value="${ch.calHighBar}" step="0.1"></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function readCanChannelRows() {
+  const rows = [];
+  for (let i = 0; i < 6; i++) {
+    rows.push({
+      enabled: document.getElementById(`canCh${i}en`).checked,
+      assigned: document.getElementById(`canCh${i}assigned`).value,
+      calLowRaw: parseInt(document.getElementById(`canCh${i}lowRaw`).value, 10),
+      calLowBar: parseFloat(document.getElementById(`canCh${i}lowBar`).value),
+      calHighRaw: parseInt(document.getElementById(`canCh${i}highRaw`).value, 10),
+      calHighBar: parseFloat(document.getElementById(`canCh${i}highBar`).value),
+    });
+  }
+  return rows;
+}
+
+async function load() {
+  const msg = document.getElementById('msg');
+  msg.textContent = ''; msg.className = '';
+  try {
+    const res = await fetch('/api/config');
+    const resp = await res.json();
+    const c = resp.config;
+    document.getElementById('configPath').textContent = resp.configFilePath;
+
+    setv('systemName', c.systemName);
+    if (c.systemName) document.getElementById('bannerTitle').textContent = c.systemName;
+    if (c.language) {
+      setv('languageSelect', c.language);
+      setLanguage(c.language);
+    }
+
+    document.getElementById('s1name').textContent = c.stage1.name;
+    setv('s1min', c.stage1.minStrokeTimeMs);
+    setv('s1max', c.stage1.maxStrokeTimeMs);
+    setv('s1delta', c.stage1.spikeDeltaBar);
+    setv('s1window', c.stage1.spikeWindowMs);
+    setv('s1pulse', c.stage1.pulseDurationMs);
+
+    document.getElementById('s2name').textContent = c.stage2.name;
+    setv('s2min', c.stage2.minStrokeTimeMs);
+    setv('s2max', c.stage2.maxStrokeTimeMs);
+    setv('s2delta', c.stage2.spikeDeltaBar);
+    setv('s2window', c.stage2.spikeWindowMs);
+    setv('s2pulse', c.stage2.pulseDurationMs);
+
+    setv('maxHyd', c.safety.maxHydraulicPressureBar);
+    setv('maxH2', c.safety.maxHydrogenPressureBar);
+    setv('maxTemp', c.safety.maxTempC);
+    setv('sensorAge', c.safety.sensorMaxAgeMs);
+    setv('syncLead', c.safety.maxSyncStrokeLead);
+
+    setv('tankVol', c.tank.volumeLitres);
+    setv('tankP', c.tank.nominalPressureBar);
+    setv('tankT', c.tank.nominalTempC);
+    setv('ventDur', c.vent.durationMs);
+    setv('pollPeriod', c.pollPeriodMs);
+
+    setv('canIface', c.canModule.interface);
+    setv('canFunc', c.canModule.functionCode);
+    setv('canReqId', c.canModule.requestId);
+    setv('canRespId', c.canModule.responseId);
+    setv('canPoll', c.canModule.pollPeriodMs);
+    setv('canTimeout', c.canModule.responseTimeoutMs);
+    document.getElementById('canLive').checked = c.canModule.liveEnabled;
+    buildCanChannelRows(c.canModule.channels);
+
+    try {
+      const tempRes = await fetch('/api/temp/status');
+      const tempSt = await tempRes.json();
+      availableOneWireDevices = tempSt.availableDevices || [];
+    } catch (e) {
+      availableOneWireDevices = [];
+    }
+    setv('tempPoll', c.tempModule.pollPeriodMs);
+    document.getElementById('tempLive').checked = c.tempModule.liveEnabled;
+    buildTempChannelRows(c.tempModule.channels);
+
+    setv('relayChip', c.relayModule.chip);
+    document.getElementById('relayLive').checked = c.relayModule.liveEnabled;
+    buildRelayChannelRows(c.relayModule.channels);
+  } catch (e) {
+    msg.textContent = t('admin_failed_load_config') + ' ' + e;
+    msg.className = 'err';
+  }
+}
+
+// Called when the operator picks a different language from the
+// dropdown - switches immediately (static text, and the channel
+// tables' translated option labels), previewing before Apply persists
+// it. Reads each table's current values first so in-progress edits
+// (an unsaved port number, a checkbox) survive the rebuild.
+function onLanguageChange(lang) {
+  const canRows = readCanChannelRows();
+  const tempRows = readTempChannelRows();
+  const relayRows = readRelayChannelRows();
+  setLanguage(lang);
+  buildCanChannelRows(canRows);
+  buildTempChannelRows(tempRows);
+  buildRelayChannelRows(relayRows);
+}
+
+async function apply(persist) {
+  const msg = document.getElementById('msg');
+  msg.textContent = ''; msg.className = '';
+
+  const body = {
+    systemName: v('systemName'),
+    language: v('languageSelect'),
+    pollPeriodMs: int('pollPeriod'),
+    stage1: {
+      name: document.getElementById('s1name').textContent,
+      minStrokeTimeMs: int('s1min'), maxStrokeTimeMs: int('s1max'),
+      spikeDeltaBar: num('s1delta'), spikeWindowMs: int('s1window'),
+      pulseDurationMs: int('s1pulse'),
+    },
+    stage2: {
+      name: document.getElementById('s2name').textContent,
+      minStrokeTimeMs: int('s2min'), maxStrokeTimeMs: int('s2max'),
+      spikeDeltaBar: num('s2delta'), spikeWindowMs: int('s2window'),
+      pulseDurationMs: int('s2pulse'),
+    },
+    safety: {
+      maxHydraulicPressureBar: num('maxHyd'),
+      maxHydrogenPressureBar: num('maxH2'),
+      maxTempC: num('maxTemp'),
+      sensorMaxAgeMs: int('sensorAge'),
+      maxSyncStrokeLead: int('syncLead'),
+    },
+    tank: {
+      volumeLitres: num('tankVol'),
+      nominalPressureBar: num('tankP'),
+      nominalTempC: num('tankT'),
+    },
+    vent: { durationMs: int('ventDur') },
+    canModule: {
+      interface: v('canIface'),
+      requestId: v('canReqId'),
+      responseId: v('canRespId'),
+      functionCode: int('canFunc'),
+      pollPeriodMs: int('canPoll'),
+      responseTimeoutMs: int('canTimeout'),
+      liveEnabled: document.getElementById('canLive').checked,
+      channels: readCanChannelRows(),
+    },
+    tempModule: {
+      pollPeriodMs: int('tempPoll'),
+      liveEnabled: document.getElementById('tempLive').checked,
+      channels: readTempChannelRows(),
+    },
+    relayModule: {
+      chip: v('relayChip'),
+      liveEnabled: document.getElementById('relayLive').checked,
+      channels: readRelayChannelRows(),
+    },
+  };
+
+  try {
+    const url = '/api/config' + (persist ? '?persist=true' : '');
+    const res = await fetch(url, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      msg.textContent = await res.text();
+      msg.className = 'err';
+      return;
+    }
+    const resp = await res.json();
+    document.getElementById('configPath').textContent = resp.configFilePath;
+    if (resp.config.systemName) document.getElementById('bannerTitle').textContent = resp.config.systemName;
+    if (resp.config.language) {
+      setv('languageSelect', resp.config.language);
+      setLanguage(resp.config.language);
+    }
+    if (!persist) {
+      msg.textContent = t('admin_applied_memory_only');
+      msg.className = 'ok';
+    } else if (resp.saved) {
+      msg.textContent = t('admin_applied_saved_to') + ' ' + resp.configFilePath;
+      msg.className = 'ok';
+    } else {
+      msg.textContent = t('admin_applied_failed_save') + ' ' + (resp.saveError || t('admin_unknown_error'));
+      msg.className = 'err';
+    }
+    pollCanStatus();
+    pollTempStatus();
+  } catch (e) {
+    msg.textContent = t('admin_failed_apply') + ' ' + e;
+    msg.className = 'err';
+  }
+}
+
+// --- Live readings / simulator panel -------------------------------
+// Polls /api/can/status independently of the config form above, since
+// these numbers change continuously (either from the bus, or from the
+// operator dragging a simulated value) and shouldn't require a full
+// config Apply to see or adjust.
+
+const simDebounce = {};
+
+function sendSimValue(sensorName, bar) {
+  clearTimeout(simDebounce[sensorName]);
+  simDebounce[sensorName] = setTimeout(async () => {
+    try {
+      await fetch('/api/can/sim', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ values: { [sensorName]: bar } }),
+      });
+    } catch (e) { /* next poll will just show the last-accepted value */ }
+  }, 120);
+}
+
+let userIsEditingSim = false;
+
+async function pollCanStatus() {
+  try {
+    const res = await fetch('/api/can/status');
+    const st = await res.json();
+
+    const commsEl = document.getElementById('canCommsStatus');
+    const mode = st.liveEnabled ? t('common_live') : t('common_simulation');
+    if (st.liveEnabled) {
+      commsEl.innerHTML = `${t('admin_mode')}: <strong>${mode}</strong> &middot; ${t('admin_comms')}: ` +
+        (st.commsOk ? `<span class="comms-ok">${t('admin_ok')}</span>` : `<span class="comms-bad">${t('admin_fault_word')} - ${st.lastError || t('admin_no_response')}</span>`);
+    } else {
+      commsEl.innerHTML = `${t('admin_mode')}: <strong>${mode}</strong> &middot; ${t('admin_adjust_values_bus')}`;
+    }
+
+    const container = document.getElementById('canReadings');
+    // Don't rebuild the DOM out from under an input the operator is
+    // actively dragging/typing in.
+    if (userIsEditingSim) return;
+
+    const enabledChannels = st.channels.filter(c => c.enabled);
+    if (enabledChannels.length === 0) {
+      container.innerHTML = `<p class="hint">${t('admin_no_channels')}</p>`;
+      return;
+    }
+
+    container.innerHTML = enabledChannels.map(c => {
+      const rawStr = `${t('admin_raw_prefix')} ${c.raw}`;
+      if (st.liveEnabled) {
+        return `<div class="reading-row">
+          <div class="ch-name">${c.assigned}</div>
+          <div class="ch-raw">${rawStr}</div>
+          <div class="ch-bar">${c.bar.toFixed(2)} ${t('admin_bar_unit')}</div>
+        </div>`;
+      }
+      return `<div class="reading-row">
+        <div class="ch-name">${c.assigned}</div>
+        <div class="ch-raw">${t('admin_simulated')}</div>
+        <input type="number" step="0.1" value="${c.bar.toFixed(2)}"
+          onfocus="userIsEditingSim=true"
+          onblur="userIsEditingSim=false"
+          oninput="sendSimValue('${c.assigned}', parseFloat(this.value))">
+        <span>${t('admin_bar_unit')}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('canCommsStatus').textContent = t('admin_failed_can_status') + ' ' + e;
+  }
+}
+
+// --- Temperature live readings / simulator panel -------------------
+// Mirrors pollCanStatus above. Also grows each row's device dropdown as
+// new 1-Wire sensors are discovered, without disturbing whatever the
+// operator currently has selected.
+
+let userIsEditingTempSim = false;
+
+function sendTempSimValue(sensorName, c) {
+  clearTimeout(simDebounce['temp:' + sensorName]);
+  simDebounce['temp:' + sensorName] = setTimeout(async () => {
+    try {
+      await fetch('/api/temp/sim', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: { [sensorName]: c } }),
+      });
+    } catch (e) { /* next poll will just show the last-accepted value */ }
+  }, 120);
+}
+
+function growDeviceDropdowns(devices) {
+  availableOneWireDevices = devices;
+  document.querySelectorAll('#tempChannelRows select[id$="device"]').forEach(sel => {
+    const have = new Set(Array.from(sel.options).map(o => o.value));
+    devices.forEach(id => {
+      if (!have.has(id)) {
+        const opt = document.createElement('option');
+        opt.value = id; opt.textContent = id;
+        sel.appendChild(opt);
+      }
+    });
+  });
+}
+
+async function pollTempStatus() {
+  try {
+    const res = await fetch('/api/temp/status');
+    const st = await res.json();
+
+    growDeviceDropdowns(st.availableDevices || []);
+
+    const commsEl = document.getElementById('tempCommsStatus');
+    const mode = st.liveEnabled ? t('common_live') : t('common_simulation');
+    commsEl.innerHTML = st.liveEnabled
+      ? `${t('admin_mode')}: <strong>${mode}</strong> &middot; ${st.availableDevices.length} ${t('admin_devices_detected')}`
+      : `${t('admin_mode')}: <strong>${mode}</strong> &middot; ${t('admin_adjust_values_1wire')}`;
+
+    const container = document.getElementById('tempReadings');
+    if (userIsEditingTempSim) return;
+
+    const enabledChannels = st.channels.filter(c => c.enabled);
+    if (enabledChannels.length === 0) {
+      container.innerHTML = `<p class="hint">${t('admin_no_channels')}</p>`;
+      return;
+    }
+
+    container.innerHTML = enabledChannels.map(c => {
+      if (st.liveEnabled) {
+        const status = c.ok ? `${c.tempC.toFixed(2)} °C` :
+          `<span class="comms-bad">${t('admin_fault_word')}${c.error ? ' - ' + c.error : ''}</span>`;
+        return `<div class="reading-row">
+          <div class="ch-name">${c.assigned}</div>
+          <div class="ch-raw">${c.deviceId || t('admin_no_device_selected')}</div>
+          <div class="ch-bar">${status}</div>
+        </div>`;
+      }
+      return `<div class="reading-row">
+        <div class="ch-name">${c.assigned}</div>
+        <div class="ch-raw">${t('admin_simulated')}</div>
+        <input type="number" step="0.1" value="${(c.tempC || 0).toFixed(2)}"
+          onfocus="userIsEditingTempSim=true"
+          onblur="userIsEditingTempSim=false"
+          oninput="sendTempSimValue('${c.assigned}', parseFloat(this.value))">
+        <span>&deg;C</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('tempCommsStatus').textContent = t('admin_failed_temp_status') + ' ' + e;
+  }
+}
+
+// --- Change admin password -------------------------------------------
+// Independent of the config Apply/Save flow above: its own endpoint,
+// takes effect immediately (no restart, and no need to also hit Apply).
+// A browser tab with the old password already cached in its Basic Auth
+// won't notice until its next 401, so on success we reload the page,
+// which forces a fresh login prompt with the new password.
+
+async function changePassword() {
+  const msg = document.getElementById('passwordMsg');
+  msg.textContent = ''; msg.style.color = '';
+
+  const current = document.getElementById('currentPassword').value;
+  const next = document.getElementById('newPassword').value;
+  const confirm = document.getElementById('confirmPassword').value;
+
+  if (next !== confirm) {
+    msg.textContent = t('admin_password_mismatch');
+    msg.style.color = 'var(--bad)';
+    return;
+  }
+  if (next.length < 8) {
+    msg.textContent = t('admin_password_too_short');
+    msg.style.color = 'var(--bad)';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/admin/password', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ currentPassword: current, newPassword: next }),
+    });
+    if (!res.ok) {
+      msg.textContent = await res.text();
+      msg.style.color = 'var(--bad)';
+      return;
+    }
+    msg.textContent = t('admin_password_changed_ok');
+    msg.style.color = 'var(--good)';
+    document.getElementById('currentPassword').value = '';
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmPassword').value = '';
+    setTimeout(() => location.reload(), 1800);
+  } catch (e) {
+    msg.textContent = t('admin_password_change_failed') + ' ' + e;
+    msg.style.color = 'var(--bad)';
+  }
+}
+
+// --- Valid customer codes (allow-list) ---
+// Edited as plain "code,Full Name" lines rather than a generated table,
+// matching the file format on disk (ValidCodes.SetAll/List in records.go)
+// so what's on screen looks like what's in the file.
+
+function codesToText(entries) {
+  return entries.map(e => e.code + ',' + e.name).join('\n');
+}
+
+function textToCodes(text) {
+  return text.split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '' && !line.startsWith('#'))
+    .map(line => {
+      const idx = line.indexOf(',');
+      return idx === -1
+        ? { code: line.trim(), name: '' }
+        : { code: line.slice(0, idx).trim(), name: line.slice(idx + 1).trim() };
+    });
+}
+
+async function loadCodes() {
+  const msg = document.getElementById('codesMsg');
+  msg.textContent = ''; msg.className = '';
+  try {
+    const res = await fetch('/api/admin/codes');
+    const data = await res.json();
+    document.getElementById('validCodesText').value = codesToText(data.codes || []);
+  } catch (e) {
+    msg.textContent = t('admin_failed_load_codes') + ' ' + e;
+    msg.className = 'err';
+  }
+}
+
+async function saveCodes() {
+  const msg = document.getElementById('codesMsg');
+  msg.textContent = ''; msg.className = '';
+  try {
+    const res = await fetch('/api/admin/codes', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ codes: textToCodes(document.getElementById('validCodesText').value) }),
+    });
+    if (!res.ok) {
+      msg.textContent = await res.text();
+      msg.className = 'err';
+      return;
+    }
+    const data = await res.json();
+    document.getElementById('validCodesText').value = codesToText(data.codes || []);
+    msg.textContent = t('admin_codes_saved_ok');
+    msg.className = 'ok';
+  } catch (e) {
+    msg.textContent = t('admin_failed_save_codes') + ' ' + e;
+    msg.className = 'err';
+  }
+}
+
+// --- Dispense records ---
+// GET /api/records both returns and clears the file (DispenseLog.DrainAll)
+// - each fetch here is a real drain, not a refreshable view, so the
+// records are rendered locally rather than re-fetched on any timer.
+
+async function fetchRecords() {
+  const msg = document.getElementById('recordsMsg');
+  const tbody = document.getElementById('dispenseRecordRows');
+  msg.textContent = ''; msg.className = 'hint';
+  try {
+    const res = await fetch('/api/records');
+    const data = await res.json();
+    const records = data.records || [];
+    tbody.innerHTML = '';
+    if (records.length === 0) {
+      msg.textContent = t('admin_no_records');
+      return;
+    }
+    records.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border)';
+      const time = new Date(r.timestamp).toLocaleString();
+      tr.innerHTML = `
+        <td style="padding:6px 4px;">${time}</td>
+        <td style="padding:6px 4px;">${r.customerCode}</td>
+        <td style="padding:6px 4px;">${r.deliveredMassKg.toFixed(3)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (e) {
+    msg.textContent = t('admin_failed_fetch_records') + ' ' + e;
+    msg.className = 'err';
+  }
+}
+
+initI18n().then(() => {
+  document.title = t('admin_page_title');
+  load();
+  loadCodes();
+  setInterval(pollCanStatus, 700);
+  pollCanStatus();
+  setInterval(pollTempStatus, 700);
+  pollTempStatus();
+});
+</script>
+
+</body>
+</html>

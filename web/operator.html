@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster Control</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .phase-pill {
+    padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  main { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  input[type=number] {
+    width: 100%; padding: 9px 10px; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-size: 15px;
+  }
+  .nozzle-group { display: flex; gap: 10px; margin-top: 6px; }
+  .nozzle-group button {
+    flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); cursor: pointer; font-size: 14px;
+  }
+  .nozzle-group button.selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+  button.primary, button.danger, button.warnbtn {
+    flex: 1; padding: 12px; border-radius: 6px; border: none; font-size: 15px;
+    font-weight: 600; cursor: pointer;
+  }
+  button.primary { background: var(--good); color: #06210f; }
+  button.danger { background: var(--bad); color: #2a0505; }
+  button.warnbtn { background: var(--warn); color: #2a1e00; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 8px 0;
+    border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bar-track { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .bar-fill { height: 100%; background: var(--accent); transition: width .3s; }
+  .stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .stage-box { background: var(--panel2); border-radius: 8px; padding: 14px; }
+  .stage-box h3 { margin: 0 0 8px; font-size: 14px; }
+  .dir-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+    font-weight: 700; background: #26323b; }
+  .dir-badge.up { color: var(--good); }
+  .dir-badge.down { color: var(--accent); }
+  .faults { list-style: none; padding: 0; margin: 0; font-size: 13px; color: var(--bad); }
+  .faults li { padding: 4px 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="idx_page_title">Hydrogen Booster Control</h1>
+  <div style="display:flex; align-items:center; gap:16px;">
+    <a href="/diagnostics.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_diagnostics">Diagnostics</span> &rarr;</a>
+    <a href="/admin.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_admin">Admin / Config</span> &rarr;</a>
+    <div id="phasePill" class="phase-pill">--</div>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+
+    <div>
+      <div class="card">
+        <h2 data-i18n="idx_job_setup">Job Setup</h2>
+
+        <label data-i18n="idx_nozzle">Nozzle</label>
+        <div class="nozzle-group">
+          <button id="nozzle350" onclick="selectNozzle(350)">350 Bar</button>
+          <button id="nozzle700" onclick="selectNozzle(700)">700 Bar</button>
+        </div>
+
+        <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
+        <input type="number" id="targetPressure" min="1" step="1" value="350">
+
+        <label for="targetMass" data-i18n="idx_amount_hydrogen">Amount of hydrogen (kg)</label>
+        <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0">
+
+        <div class="actions">
+          <button class="primary" id="startBtn" onclick="startJob()" data-i18n="idx_start">Start</button>
+          <button class="danger" id="stopBtn" onclick="stopJob()" data-i18n="idx_stop">Stop</button>
+        </div>
+        <div class="actions">
+          <button class="warnbtn" id="clearFaultBtn" onclick="clearFault()" style="display:none;" data-i18n="idx_clear_fault">Clear Fault</button>
+        </div>
+        <div class="error" id="errorMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="idx_faults">Faults</h2>
+        <ul class="faults" id="faultList"><li class="muted" style="color:var(--muted)" data-i18n="idx_none">None</li></ul>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2 data-i18n="idx_delivery">Delivery</h2>
+        <div class="stat-row"><span data-i18n="idx_output_pressure">Output pressure</span><span class="val" id="outP">-- bar</span></div>
+        <div class="bar-track"><div class="bar-fill" id="pressBar" style="width:0%"></div></div>
+        <div class="stat-row"><span data-i18n="idx_output_temperature">Output temperature</span><span class="val" id="outT">-- &deg;C</span></div>
+        <div class="stat-row"><span data-i18n="idx_delivered_mass">Delivered mass</span><span class="val" id="massVal">-- kg</span></div>
+        <div class="bar-track"><div class="bar-fill" id="massBar" style="width:0%"></div></div>
+        <div class="stat-row"><span data-i18n="idx_vent_valve">Vent valve</span><span class="val" id="ventState">--</span></div>
+        <div class="stat-row"><span data-i18n="idx_elapsed">Elapsed</span><span class="val" id="elapsedVal">--</span></div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="idx_storage_tank">Storage Tank</h2>
+        <div class="stat-row"><span data-i18n="idx_tank_pressure">Tank pressure</span><span class="val" id="tankP">-- bar</span></div>
+        <div class="stat-row"><span data-i18n="idx_tank_temperature">Tank temperature</span><span class="val" id="tankT">-- &deg;C</span></div>
+        <div class="stat-row"><span data-i18n="idx_pressure_input_module">Pressure input module</span><span class="val" id="canModeVal">--</span></div>
+      </div>
+
+      <div class="card">
+        <h2 data-i18n="idx_hydraulic_stages">Hydraulic Stages</h2>
+        <div class="stage-grid">
+          <div class="stage-box">
+            <h3 id="s1name">Stage 1</h3>
+            <div class="stat-row"><span data-i18n="idx_direction">Direction</span><span class="val"><span class="dir-badge" id="s1dir">--</span></span></div>
+            <div class="stat-row"><span data-i18n="idx_hyd_pressure">Hyd. pressure</span><span class="val" id="s1p">-- bar</span></div>
+            <div class="stat-row"><span data-i18n="idx_strokes">Strokes</span><span class="val" id="s1strokes">--</span></div>
+          </div>
+          <div class="stage-box">
+            <h3 id="s2name">Stage 2</h3>
+            <div class="stat-row"><span data-i18n="idx_direction">Direction</span><span class="val"><span class="dir-badge" id="s2dir">--</span></span></div>
+            <div class="stat-row"><span data-i18n="idx_hyd_pressure">Hyd. pressure</span><span class="val" id="s2p">-- bar</span></div>
+            <div class="stat-row"><span data-i18n="idx_strokes">Strokes</span><span class="val" id="s2strokes">--</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+let selectedNozzle = 350;
+
+function selectNozzle(n) {
+  selectedNozzle = n;
+  document.getElementById('nozzle350').classList.toggle('selected', n === 350);
+  document.getElementById('nozzle700').classList.toggle('selected', n === 700);
+}
+selectNozzle(350);
+
+async function startJob() {
+  document.getElementById('errorMsg').textContent = '';
+  const body = {
+    targetPressureBar: parseFloat(document.getElementById('targetPressure').value),
+    targetMassKg: parseFloat(document.getElementById('targetMass').value),
+    nozzle: selectedNozzle,
+  };
+  const res = await fetch('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!res.ok) {
+    document.getElementById('errorMsg').textContent = await res.text();
+  }
+}
+
+async function stopJob() {
+  await fetch('/api/stop', { method: 'POST' });
+}
+
+async function clearFault() {
+  await fetch('/api/clearfault', { method: 'POST' });
+}
+
+const phaseColors = {
+  idle: '#26323b', filling: 'var(--accent)', venting: 'var(--warn)',
+  complete: 'var(--good)', fault: 'var(--bad)'
+};
+const phaseKeys = {
+  idle: 'phase_idle', filling: 'phase_filling', venting: 'phase_venting',
+  complete: 'phase_complete', fault: 'phase_fault'
+};
+
+function fmt(n, d=1) { return (typeof n === 'number') ? n.toFixed(d) : '--'; }
+
+async function poll() {
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+
+    const pill = document.getElementById('phasePill');
+    pill.textContent = t(phaseKeys[s.phase] || s.phase);
+    pill.style.background = phaseColors[s.phase] || '#26323b';
+    pill.style.color = (s.phase === 'idle') ? 'var(--text)' : '#08131c';
+
+    document.getElementById('outP').textContent = fmt(s.outputPressureBar) + ' bar';
+    document.getElementById('outT').textContent = fmt(s.outputTempC) + ' \u00b0C';
+    document.getElementById('massVal').textContent = fmt(s.deliveredMassKg, 3) + ' kg';
+    document.getElementById('ventState').textContent = s.ventOpen ? t('common_open') : t('common_closed');
+    document.getElementById('elapsedVal').textContent = s.startedAt ? fmt(s.elapsedSec, 0) + ' s' : '--';
+    document.getElementById('tankP').textContent = fmt(s.tankPressureBar) + ' bar';
+    document.getElementById('tankT').textContent = fmt(s.tankTempC) + ' \u00b0C';
+
+    if (s.targetPressureBar > 0) {
+      document.getElementById('pressBar').style.width = Math.min(100, 100 * s.outputPressureBar / s.targetPressureBar) + '%';
+    }
+    if (s.targetMassKg > 0) {
+      document.getElementById('massBar').style.width = Math.min(100, 100 * s.deliveredMassKg / s.targetMassKg) + '%';
+    }
+
+    const s1 = s.stage1, s2 = s.stage2;
+    document.getElementById('s1name').textContent = s1.name;
+    document.getElementById('s1dir').textContent = s1.direction === 'UP' ? t('common_up') : t('common_down');
+    document.getElementById('s1dir').className = 'dir-badge ' + (s1.direction === 'UP' ? 'up' : 'down');
+    document.getElementById('s1p').textContent = fmt(s1.hydPressureBar) + ' bar';
+    document.getElementById('s1strokes').textContent = s1.strokeCount;
+
+    document.getElementById('s2name').textContent = s2.name;
+    document.getElementById('s2dir').textContent = s2.direction === 'UP' ? t('common_up') : t('common_down');
+    document.getElementById('s2dir').className = 'dir-badge ' + (s2.direction === 'UP' ? 'up' : 'down');
+    document.getElementById('s2p').textContent = fmt(s2.hydPressureBar) + ' bar';
+    document.getElementById('s2strokes').textContent = s2.strokeCount;
+
+    const faultList = document.getElementById('faultList');
+    if (s.faults && s.faults.length) {
+      faultList.innerHTML = s.faults.map(f => `<li>${f}</li>`).join('');
+    } else {
+      faultList.innerHTML = `<li style="color:var(--muted)">${t('idx_none')}</li>`;
+    }
+
+    const running = s.phase === 'filling' || s.phase === 'venting';
+    document.getElementById('startBtn').disabled = running || s.phase === 'fault';
+    document.getElementById('stopBtn').disabled = !running;
+    document.getElementById('clearFaultBtn').style.display = (s.phase === 'fault') ? 'block' : 'none';
+
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function pollCanMode() {
+  try {
+    const res = await fetch('/api/can/status');
+    const st = await res.json();
+    const el = document.getElementById('canModeVal');
+    if (st.liveEnabled) {
+      el.textContent = st.commsOk ? t('common_live') : t('common_live_fault');
+      el.style.color = st.commsOk ? 'var(--good)' : 'var(--bad)';
+    } else {
+      el.textContent = t('common_simulation');
+      el.style.color = 'var(--warn)';
+    }
+  } catch (e) {
+    // leave the last-known value showing rather than blanking it
+  }
+}
+
+initI18n().then(() => {
+  document.title = t('idx_page_title');
+  setInterval(poll, 500);
+  setInterval(pollCanMode, 1000);
+  poll();
+  pollCanMode();
+});
+</script>
+
+</body>
+</html>

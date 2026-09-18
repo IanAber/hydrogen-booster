@@ -1,0 +1,73 @@
+{
+  "pollPeriodMs": 100,
+  "stage1": {
+    "name": "Stage 1 (A/B)",
+    "minStrokeTimeMs": 300,
+    "maxStrokeTimeMs": 6000,
+    "spikeDeltaBar": 15,
+    "spikeWindowMs": 250,
+    "pulseDurationMs": 500
+  },
+  "stage2": {
+    "name": "Stage 2 (C/D)",
+    "minStrokeTimeMs": 300,
+    "maxStrokeTimeMs": 6000,
+    "spikeDeltaBar": 15,
+    "spikeWindowMs": 250,
+    "pulseDurationMs": 500
+  },
+  "safety": {
+    "maxHydraulicPressureBar": 25,
+    "maxHydrogenPressureBar": 750,
+    "maxTempC": 85,
+    "sensorMaxAgeMs": 2000,
+    "maxSyncStrokeLead": 1
+  },
+  "tank": {
+    "volumeLitres": 300,
+    "nominalPressureBar": 35,
+    "nominalTempC": 15
+  },
+  "vent": {
+    "durationMs": 5000
+  },
+  "canModule": {
+    "interface": "can0",
+    "requestId": "0x101",
+    "responseId": "0x1",
+    "functionCode": 2,
+    "pollPeriodMs": 200,
+    "responseTimeoutMs": 300,
+    "liveEnabled": false,
+    "channels": [
+      {"enabled": true, "assigned": "Hyd1Pressure", "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 65535, "calHighBar": 250},
+      {"enabled": true, "assigned": "Hyd2Pressure", "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 65535, "calHighBar": 250},
+      {"enabled": true, "assigned": "TankPressure", "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 65535, "calHighBar": 300},
+      {"enabled": true, "assigned": "InterStagePressure", "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 65535, "calHighBar": 500},
+      {"enabled": true, "assigned": "OutputPressure", "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 65535, "calHighBar": 750},
+      {"enabled": false, "calLowRaw": 0, "calLowBar": 0, "calHighRaw": 0, "calHighBar": 0}
+    ]
+  },
+  "tempModule": {
+    "pollPeriodMs": 5000,
+    "liveEnabled": false,
+    "channels": [
+      {"enabled": true, "assigned": "Hyd1Temp", "deviceId": ""},
+      {"enabled": true, "assigned": "Hyd2Temp", "deviceId": ""},
+      {"enabled": true, "assigned": "TankTemp", "deviceId": ""},
+      {"enabled": true, "assigned": "InterStageTemp", "deviceId": ""},
+      {"enabled": true, "assigned": "OutputTemp", "deviceId": ""}
+    ]
+  },
+  "relayModule": {
+    "chip": "/dev/gpiochip16",
+    "liveEnabled": false,
+    "channels": [
+      {"enabled": true, "assigned": "Valve1A(dir)", "port": 0},
+      {"enabled": true, "assigned": "Valve1B(pulse)", "port": 1},
+      {"enabled": true, "assigned": "Valve2A(dir)", "port": 2},
+      {"enabled": true, "assigned": "Valve2B(pulse)", "port": 3},
+      {"enabled": true, "assigned": "VentValve", "port": 4}
+    ]
+  }
+}

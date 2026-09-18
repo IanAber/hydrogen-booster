@@ -1,0 +1,18 @@
+[Unit]
+Description=Hydrogen Booster control service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/hydrogen-booster
+ExecStart=/usr/bin/hydrogen-booster -config /var/hydrogen-booster/config.json -listen :8080 -web /etc/hydrogen-booster/web -admin-password-file /var/hydrogen-booster/admin-password -dispense-log-file /var/hydrogen-booster/dispense-log.jsonl -valid-codes-file /var/hydrogen-booster/valid-codes.txt
+Restart=on-failure
+RestartSec=5
+User=egadmin
+
+# Raw SocketCAN access without running as root.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

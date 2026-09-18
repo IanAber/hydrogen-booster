@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="SshConfigs">
+    <configs>
+      <sshConfig authType="PASSWORD" host="egt6.local" id="d07a1c62-e821-4bdc-9973-1181bd632d9d" port="22" nameFormat="DESCRIPTIVE" username="egadmin" useOpenSSHConfig="true" />
+    </configs>
+  </component>
+</project>

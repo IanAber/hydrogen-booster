@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster Diagnostics</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header nav { display: flex; align-items: center; gap: 16px; }
+  header nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+  header nav a:hover { color: var(--text); }
+  .mode-pill {
+    padding: 5px 12px; border-radius: 999px; font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .04em; background: #26323b;
+  }
+  main { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; }
+  .valve-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .valve-box {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; text-align: center;
+  }
+  .valve-box .light {
+    width: 16px; height: 16px; border-radius: 50%; margin: 0 auto 10px;
+    background: #3a4750; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+  }
+  .valve-box.on .light { background: var(--good); box-shadow: 0 0 10px var(--good); }
+  .valve-box .name { font-size: 13px; font-weight: 600; }
+  .valve-box .state { font-size: 12px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+  .valve-box.on .state { color: var(--good); }
+  .sensor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .sensor-box { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .sensor-box h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; }
+  .sensor-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; font-size: 14px; }
+  .sensor-row .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .sensor-row .val.fault { color: var(--bad); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .stale { opacity: .5; }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="diag_page_title">Live Diagnostics</h1>
+  <nav>
+    <a href="/operator.html">&larr; <span data-i18n="nav_dashboard">Dashboard</span></a>
+    <a href="/admin.html" data-i18n="nav_admin">Admin / Config</a>
+    <div id="canModePill" class="mode-pill">--</div>
+  </nav>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 data-i18n="diag_valves">Valves</h2>
+    <div class="valve-grid" id="valveGrid"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="diag_sensors">Sensors</h2>
+    <div class="sensor-grid" id="sensorGrid"></div>
+  </div>
+
+  <div class="muted" id="connMsg"></div>
+
+</main>
+
+<script>
+// Groups sensors from /api/diagnostics (flat list of {name, kind, value, ok})
+// into the physical locations an operator thinks in terms of. Titles are
+// resolved via t() at render time (not stored here) so they stay current
+// after a language switch.
+function groups() {
+  return [
+    { titleKey: 'diag_group_stage1', members: ['Hyd1Pressure', 'Hyd1Temp'] },
+    { titleKey: 'diag_group_stage2', members: ['Hyd2Pressure', 'Hyd2Temp'] },
+    { titleKey: 'diag_group_storage_tank', members: ['TankPressure', 'TankTemp'] },
+    { titleKey: 'diag_group_inter_stage', members: ['InterStagePressure', 'InterStageTemp'] },
+    { titleKey: 'diag_group_output_nozzle', members: ['OutputPressure', 'OutputTemp'] },
+  ];
+}
+
+function valveLabelKey(name) {
+  switch (name) {
+    case 'Valve1A(dir)': return 'diag_valve_s1_dir';
+    case 'Valve1B(pulse)': return 'diag_valve_s1_pulse';
+    case 'Valve2A(dir)': return 'diag_valve_s2_dir';
+    case 'Valve2B(pulse)': return 'diag_valve_s2_pulse';
+    case 'VentValve': return 'diag_valve_vent';
+    default: return null;
+  }
+}
+
+function fmt(n, d=1) { return (typeof n === 'number') ? n.toFixed(d) : '--'; }
+function unitFor(kind) { return kind === 'temp' ? '°C' : 'bar'; }
+
+function renderValves(valves) {
+  const grid = document.getElementById('valveGrid');
+  grid.innerHTML = valves.map(v => {
+    const key = valveLabelKey(v.name);
+    const label = key ? t(key) : v.name;
+    return `
+    <div class="valve-box ${v.on ? 'on' : ''}">
+      <div class="light"></div>
+      <div class="name">${label}</div>
+      <div class="state" ${v.ok === false ? 'style="color:var(--bad)"' : ''}>${v.ok === false ? t('diag_fault') : (v.on ? t('diag_energised') : t('diag_off'))}</div>
+    </div>
+  `;
+  }).join('');
+}
+
+function renderSensors(sensors) {
+  const byName = {};
+  sensors.forEach(s => byName[s.name] = s);
+
+  const grid = document.getElementById('sensorGrid');
+  grid.innerHTML = groups().map(g => `
+    <div class="sensor-box">
+      <h3>${t(g.titleKey)}</h3>
+      ${g.members.map(name => {
+        const s = byName[name];
+        if (!s) return '';
+        const cls = s.ok ? 'val' : 'val fault';
+        const val = s.ok ? fmt(s.value, s.kind === 'temp' ? 1 : 2) + ' ' + unitFor(s.kind) : t('diag_fault');
+        return `<div class="sensor-row"><span>${s.kind === 'temp' ? t('diag_temperature') : t('diag_pressure')}</span><span class="${cls}">${val}</span></div>`;
+      }).join('')}
+    </div>
+  `).join('');
+}
+
+async function poll() {
+  const connMsg = document.getElementById('connMsg');
+  try {
+    const res = await fetch('/api/diagnostics');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    renderValves(d.valves || []);
+    renderSensors(d.sensors || []);
+    connMsg.textContent = '';
+  } catch (e) {
+    connMsg.textContent = t('diag_lost_connection');
+  }
+}
+
+async function pollCanMode() {
+  try {
+    const res = await fetch('/api/can/status');
+    const st = await res.json();
+    const el = document.getElementById('canModePill');
+    if (st.liveEnabled) {
+      el.textContent = st.commsOk ? t('diag_can_live') : t('diag_can_live_fault');
+      el.style.background = st.commsOk ? 'var(--good)' : 'var(--bad)';
+      el.style.color = '#08131c';
+    } else {
+      el.textContent = t('diag_can_simulation');
+      el.style.background = 'var(--warn)';
+      el.style.color = '#2a1e00';
+    }
+  } catch (e) {
+    // leave the last-known value showing rather than blanking it
+  }
+}
+
+initI18n().then(() => {
+  document.title = t('diag_page_title');
+  setInterval(poll, 400);
+  setInterval(pollCanMode, 1000);
+  poll();
+  pollCanMode();
+});
+</script>
+
+</body>
+</html>
