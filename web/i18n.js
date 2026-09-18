@@ -33,8 +33,8 @@ const I18N = {
     idx_direction: "Direction", idx_hyd_pressure: "Hyd. pressure", idx_strokes: "Strokes",
 
     cust_kg_dispensed: "kg dispensed", cust_amount: "Amount (kg)",
-    cust_code_label: "Your phone number / code",
-    cust_code_hint: "Enter your phone number or a code up to 10 digits to enable Start.",
+    cust_code_label: "Customer Code",
+    cust_code_hint: "Enter a code up to 10 digits to enable Start.",
     cust_fill_to_pressure: "Fill to pressure",
     cust_show_code: "Show", cust_hide_code: "Hide", cust_welcome: "Welcome",
     cust_code_not_found: "Code not recognised",
@@ -265,8 +265,8 @@ const I18N = {
     idx_hyd_pressure: "Pression hydraulique", idx_strokes: "Courses",
 
     cust_kg_dispensed: "kg distribués", cust_amount: "Quantité (kg)",
-    cust_code_label: "Votre numéro de téléphone / code",
-    cust_code_hint: "Saisissez votre numéro de téléphone ou un code de 10 chiffres maximum pour activer Démarrer.",
+    cust_code_label: "Code client",
+    cust_code_hint: "Saisissez un code de 10 chiffres maximum pour activer Démarrer.",
     cust_show_code: "Afficher", cust_hide_code: "Masquer", cust_welcome: "Bienvenue",
     cust_code_not_found: "Code non reconnu",
     cust_fill_to_pressure: "Remplir jusqu'à la pression",

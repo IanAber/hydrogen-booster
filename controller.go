@@ -28,11 +28,10 @@ type JobRequest struct {
 	TargetPressureBar float64
 	TargetMassKg      float64
 	Nozzle            NozzleSize
-	// CustomerCode identifies who a fill was for - typically a phone
-	// number, entered on the public customer screen before Start is
-	// enabled there. 1-10 digits, required. Purely a record for the
-	// journal (see the "Job started" log line); nothing downstream acts
-	// on it.
+	// CustomerCode identifies who a fill was for, entered on the public
+	// customer screen before Start is enabled there. 1-10 digits,
+	// required. Purely a record for the journal (see the "Job started"
+	// log line); nothing downstream acts on it.
 	CustomerCode string
 }
 
@@ -265,7 +264,7 @@ func (c *Controller) Start(job JobRequest) error {
 
 // isValidCustomerCode checks a non-empty customer-identifying code is
 // 1-10 ASCII digits - deliberately simple (no format assumptions beyond
-// "digits", since it may be a phone number, a membership number, etc.).
+// "digits", since it may be a membership number or other identifier).
 // The public customer screen requires one before Start is enabled; it's
 // optional everywhere else (e.g. the staff operator screen), so an empty
 // string is handled by the caller, not this function.
