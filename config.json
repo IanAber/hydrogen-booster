@@ -52,10 +52,7 @@
     "pollPeriodMs": 5000,
     "liveEnabled": false,
     "channels": [
-      {"enabled": true, "assigned": "Hyd1Temp", "deviceId": ""},
-      {"enabled": true, "assigned": "Hyd2Temp", "deviceId": ""},
-      {"enabled": true, "assigned": "TankTemp", "deviceId": ""},
-      {"enabled": true, "assigned": "InterStageTemp", "deviceId": ""},
+      {"enabled": true, "assigned": "HydOilTemp", "deviceId": ""},
       {"enabled": true, "assigned": "OutputTemp", "deviceId": ""}
     ]
   },

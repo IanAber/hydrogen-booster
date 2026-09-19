@@ -60,14 +60,11 @@ type SensorInput int
 
 const (
 	Hyd1Pressure SensorInput = iota
-	Hyd1Temp
 	Hyd2Pressure
-	Hyd2Temp
-	TankPressure // hydrogen storage tank bank
-	TankTemp
+	TankPressure       // hydrogen storage tank bank
 	InterStagePressure // between stage 1 output (B) and stage 2 input (C)
-	InterStageTemp
-	OutputPressure // final delivery, at the nozzle
+	OutputPressure     // final delivery, at the nozzle
+	HydOilTemp         // hydraulic oil temperature (single sensor, not per-stage)
 	OutputTemp
 )
 
@@ -79,22 +76,16 @@ func (s SensorInput) String() string {
 	switch s {
 	case Hyd1Pressure:
 		return "Hyd1Pressure"
-	case Hyd1Temp:
-		return "Hyd1Temp"
 	case Hyd2Pressure:
 		return "Hyd2Pressure"
-	case Hyd2Temp:
-		return "Hyd2Temp"
 	case TankPressure:
 		return "TankPressure"
-	case TankTemp:
-		return "TankTemp"
 	case InterStagePressure:
 		return "InterStagePressure"
-	case InterStageTemp:
-		return "InterStageTemp"
 	case OutputPressure:
 		return "OutputPressure"
+	case HydOilTemp:
+		return "HydOilTemp"
 	case OutputTemp:
 		return "OutputTemp"
 	default:
@@ -108,22 +99,16 @@ func ParseSensorInput(s string) (SensorInput, bool) {
 	switch s {
 	case "Hyd1Pressure":
 		return Hyd1Pressure, true
-	case "Hyd1Temp":
-		return Hyd1Temp, true
 	case "Hyd2Pressure":
 		return Hyd2Pressure, true
-	case "Hyd2Temp":
-		return Hyd2Temp, true
 	case "TankPressure":
 		return TankPressure, true
-	case "TankTemp":
-		return TankTemp, true
 	case "InterStagePressure":
 		return InterStagePressure, true
-	case "InterStageTemp":
-		return InterStageTemp, true
 	case "OutputPressure":
 		return OutputPressure, true
+	case "HydOilTemp":
+		return HydOilTemp, true
 	case "OutputTemp":
 		return OutputTemp, true
 	default:
@@ -148,7 +133,7 @@ func isPressureSensor(s SensorInput) bool {
 // assignment to actual temperature readings.
 func isTempSensor(s SensorInput) bool {
 	switch s {
-	case Hyd1Temp, Hyd2Temp, TankTemp, InterStageTemp, OutputTemp:
+	case HydOilTemp, OutputTemp:
 		return true
 	default:
 		return false
@@ -274,10 +259,7 @@ func (s *SimulatedIO) step() {
 			s.outP = 0
 		}
 	}
-	s.temps[Hyd1Temp] = 40 + jitter()
-	s.temps[Hyd2Temp] = 42 + jitter()
-	s.temps[TankTemp] = 15 + jitter()*0.2
-	s.temps[InterStageTemp] = 25 + jitter()
+	s.temps[HydOilTemp] = 41 + jitter()
 	s.temps[OutputTemp] = 30 + jitter()
 }
 

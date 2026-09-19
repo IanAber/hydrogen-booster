@@ -111,8 +111,8 @@ func fakeTempReader(values map[string]float64, errs map[string]error) func(strin
 func TestTempPollOnceReadsAssignedChannels(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TempModule.LiveEnabled = true
-	cfg.TempModule.Channels[0].DeviceID = "28-aaa" // Hyd1Temp by default assignment
-	cfg.TempModule.Channels[1].DeviceID = "28-bbb" // Hyd2Temp
+	cfg.TempModule.Channels[0].DeviceID = "28-aaa" // HydOilTemp by default assignment
+	cfg.TempModule.Channels[1].DeviceID = "28-bbb" // OutputTemp
 	live := NewLiveConfig(cfg)
 
 	tm := NewTemperatureModule(live, fakeTempReader(map[string]float64{
@@ -121,19 +121,19 @@ func TestTempPollOnceReadsAssignedChannels(t *testing.T) {
 	}, nil))
 	tm.pollOnce(cfg.TempModule)
 
-	v, ok := tm.ReadTempC(Hyd1Temp)
+	v, ok := tm.ReadTempC(HydOilTemp)
 	if !ok || v != 41.5 {
-		t.Errorf("Hyd1Temp = %v, ok=%v; want 41.5, true", v, ok)
+		t.Errorf("HydOilTemp = %v, ok=%v; want 41.5, true", v, ok)
 	}
-	v2, ok2 := tm.ReadTempC(Hyd2Temp)
+	v2, ok2 := tm.ReadTempC(OutputTemp)
 	if !ok2 || v2 != 43.0 {
-		t.Errorf("Hyd2Temp = %v, ok=%v; want 43.0, true", v2, ok2)
+		t.Errorf("OutputTemp = %v, ok=%v; want 43.0, true", v2, ok2)
 	}
 
 	// A sensor not on this module at all must report not-ok, so
 	// CompositeIO knows to fall back to the base simulated IO.
-	if _, ok := tm.ReadTempC(TankTemp); ok {
-		t.Error("TankTemp should not be reported as assigned (no DeviceID set)")
+	if _, ok := tm.ReadTempC(Hyd1Pressure); ok {
+		t.Error("Hyd1Pressure should not be reported as assigned (not a temp channel)")
 	}
 }
 
@@ -151,7 +151,7 @@ func TestTempPollOnceRecordsPerChannelError(t *testing.T) {
 	st := tm.Status()
 	var found bool
 	for _, ch := range st.Channels {
-		if ch.Assigned == "Hyd1Temp" {
+		if ch.Assigned == "HydOilTemp" {
 			found = true
 			if ch.Ok {
 				t.Error("expected Ok=false after a read error")
@@ -162,7 +162,7 @@ func TestTempPollOnceRecordsPerChannelError(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("Hyd1Temp channel missing from status")
+		t.Fatal("HydOilTemp channel missing from status")
 	}
 }
 
@@ -173,7 +173,7 @@ func TestTempLiveToSimSnapshotThenAdjustable(t *testing.T) {
 	tm := NewTemperatureModule(live, nil)
 
 	// Simulate a prior live reading.
-	tm.cLive[TankTemp] = 18.5
+	tm.cLive[OutputTemp] = 18.5
 
 	// Flip to simulation mode - snapshotToSim happens once, exactly as
 	// Run() does on the true->false transition.
@@ -182,15 +182,15 @@ func TestTempLiveToSimSnapshotThenAdjustable(t *testing.T) {
 	live.Set(c)
 	tm.snapshotToSim()
 
-	v, ok := tm.ReadTempC(TankTemp)
+	v, ok := tm.ReadTempC(OutputTemp)
 	if !ok || v != 18.5 {
 		t.Fatalf("expected the snapshotted 18.5 in sim mode, got %v ok=%v", v, ok)
 	}
 
-	if err := tm.SetSimValue(TankTemp, 25); err != nil {
+	if err := tm.SetSimValue(OutputTemp, 25); err != nil {
 		t.Fatal(err)
 	}
-	v2, _ := tm.ReadTempC(TankTemp)
+	v2, _ := tm.ReadTempC(OutputTemp)
 	if v2 != 25 {
 		t.Fatalf("expected the adjusted 25 after SetSimValue, got %v", v2)
 	}
@@ -199,7 +199,7 @@ func TestTempLiveToSimSnapshotThenAdjustable(t *testing.T) {
 	c2 := live.Snapshot()
 	c2.TempModule.LiveEnabled = true
 	live.Set(c2)
-	if err := tm.SetSimValue(TankTemp, 1); err == nil {
+	if err := tm.SetSimValue(OutputTemp, 1); err == nil {
 		t.Error("expected an error setting a simulated value while live is on")
 	}
 }
@@ -243,7 +243,7 @@ func TestTempModuleSurvivesFileRoundTrip(t *testing.T) {
 	if loaded.TempModule.Channels[0].DeviceID != "28-0000123456ef" {
 		t.Errorf("Channels[0].DeviceID = %q, want 28-0000123456ef", loaded.TempModule.Channels[0].DeviceID)
 	}
-	if loaded.TempModule.Channels[0].Assigned != Hyd1Temp {
-		t.Errorf("Channels[0].Assigned = %v, want Hyd1Temp", loaded.TempModule.Channels[0].Assigned)
+	if loaded.TempModule.Channels[0].Assigned != HydOilTemp {
+		t.Errorf("Channels[0].Assigned = %v, want HydOilTemp", loaded.TempModule.Channels[0].Assigned)
 	}
 }

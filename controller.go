@@ -44,7 +44,7 @@ type Status struct {
 	OutputPressureBar float64     `json:"outputPressureBar"`
 	OutputTempC       float64     `json:"outputTempC"`
 	TankPressureBar   float64     `json:"tankPressureBar"`
-	TankTempC         float64     `json:"tankTempC"`
+	HydOilTempC       float64     `json:"hydOilTempC"`
 	DeliveredMassKg   float64     `json:"deliveredMassKg"`
 	Stage1            StageStatus `json:"stage1"`
 	Stage2            StageStatus `json:"stage2"`
@@ -168,7 +168,7 @@ func (c *Controller) superviseSafety() {
 	if p, err := c.io.ReadPressureBar(OutputPressure); err == nil {
 		check("Hydrogen output pressure (bar)", p, safety.MaxHydrogenPressureBar)
 	}
-	for _, s := range []SensorInput{Hyd1Temp, Hyd2Temp, OutputTemp} {
+	for _, s := range []SensorInput{HydOilTemp, OutputTemp} {
 		if temp, err := c.io.ReadTempC(s); err == nil {
 			check("Temperature (C)", temp, safety.MaxTempC)
 		}
@@ -244,9 +244,7 @@ func (c *Controller) Start(job JobRequest) error {
 	c.startedAt = time.Now()
 	tank := c.live.Snapshot().Tank
 	if tp, err := c.io.ReadPressureBar(TankPressure); err == nil {
-		if tt, err2 := c.io.ReadTempC(TankTemp); err2 == nil {
-			c.initialTankKg = MassInVolumeKg(tank.VolumeLitres, tp, tt)
-		}
+		c.initialTankKg = MassInVolumeKg(tank.VolumeLitres, tp, tank.NominalTempC)
 	}
 	c.phase = PhaseFilling
 	setIORunning(c.io, true)
@@ -322,11 +320,7 @@ func (c *Controller) deliveredMassKg() float64 {
 	if err != nil {
 		return 0
 	}
-	tt, err := c.io.ReadTempC(TankTemp)
-	if err != nil {
-		return 0
-	}
-	remaining := MassInVolumeKg(tank.VolumeLitres, tp, tt)
+	remaining := MassInVolumeKg(tank.VolumeLitres, tp, tank.NominalTempC)
 	c.mu.Lock()
 	initial := c.initialTankKg
 	c.mu.Unlock()
@@ -400,7 +394,7 @@ func (c *Controller) superviseJob() {
 // ones a running job currently cares about.
 var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve}
 var allPressureSensors = []SensorInput{Hyd1Pressure, Hyd2Pressure, TankPressure, InterStagePressure, OutputPressure}
-var allTempSensors = []SensorInput{Hyd1Temp, Hyd2Temp, TankTemp, InterStageTemp, OutputTemp}
+var allTempSensors = []SensorInput{HydOilTemp, OutputTemp}
 
 type ValveStatus struct {
 	Name string `json:"name"`
@@ -457,7 +451,7 @@ func (c *Controller) Status() Status {
 	outP, _ := c.io.ReadPressureBar(OutputPressure)
 	outT, _ := c.io.ReadTempC(OutputTemp)
 	tankP, _ := c.io.ReadPressureBar(TankPressure)
-	tankT, _ := c.io.ReadTempC(TankTemp)
+	hydOilT, _ := c.io.ReadTempC(HydOilTemp)
 	vent, _ := c.io.RelayState(VentValve)
 
 	elapsed := 0.0
@@ -481,7 +475,7 @@ func (c *Controller) Status() Status {
 		Phase: phase, Running: phase == PhaseFilling || phase == PhaseVenting,
 		Nozzle: int(job.Nozzle), TargetPressureBar: job.TargetPressureBar, TargetMassKg: job.TargetMassKg,
 		OutputPressureBar: outP, OutputTempC: outT,
-		TankPressureBar: tankP, TankTempC: tankT,
+		TankPressureBar: tankP, HydOilTempC: hydOilT,
 		DeliveredMassKg: deliveredMass,
 		Stage1:          c.stage1.Status(),
 		Stage2:          c.stage2.Status(),

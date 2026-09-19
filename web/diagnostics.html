@@ -109,11 +109,12 @@
 // after a language switch.
 function groups() {
   return [
-    { titleKey: 'diag_group_stage1', members: ['Hyd1Pressure', 'Hyd1Temp'] },
-    { titleKey: 'diag_group_stage2', members: ['Hyd2Pressure', 'Hyd2Temp'] },
-    { titleKey: 'diag_group_storage_tank', members: ['TankPressure', 'TankTemp'] },
-    { titleKey: 'diag_group_inter_stage', members: ['InterStagePressure', 'InterStageTemp'] },
+    { titleKey: 'diag_group_stage1', members: ['Hyd1Pressure'] },
+    { titleKey: 'diag_group_stage2', members: ['Hyd2Pressure'] },
+    { titleKey: 'diag_group_storage_tank', members: ['TankPressure'] },
+    { titleKey: 'diag_group_inter_stage', members: ['InterStagePressure'] },
     { titleKey: 'diag_group_output_nozzle', members: ['OutputPressure', 'OutputTemp'] },
+    { titleKey: 'diag_group_hydraulic_oil', members: ['HydOilTemp'] },
   ];
 }
 

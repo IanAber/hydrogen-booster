@@ -149,7 +149,7 @@
       <div class="card">
         <h2 data-i18n="idx_storage_tank">Storage Tank</h2>
         <div class="stat-row"><span data-i18n="idx_tank_pressure">Tank pressure</span><span class="val" id="tankP">-- bar</span></div>
-        <div class="stat-row"><span data-i18n="idx_tank_temperature">Tank temperature</span><span class="val" id="tankT">-- &deg;C</span></div>
+        <div class="stat-row"><span data-i18n="idx_hyd_oil_temperature">Hydraulic oil temperature</span><span class="val" id="hydOilT">-- &deg;C</span></div>
         <div class="stat-row"><span data-i18n="idx_pressure_input_module">Pressure input module</span><span class="val" id="canModeVal">--</span></div>
       </div>
 
@@ -233,7 +233,7 @@ async function poll() {
     document.getElementById('ventState').textContent = s.ventOpen ? t('common_open') : t('common_closed');
     document.getElementById('elapsedVal').textContent = s.startedAt ? fmt(s.elapsedSec, 0) + ' s' : '--';
     document.getElementById('tankP').textContent = fmt(s.tankPressureBar) + ' bar';
-    document.getElementById('tankT').textContent = fmt(s.tankTempC) + ' \u00b0C';
+    document.getElementById('hydOilT').textContent = fmt(s.hydOilTempC) + ' \u00b0C';
 
     if (s.targetPressureBar > 0) {
       document.getElementById('pressBar').style.width = Math.min(100, 100 * s.outputPressureBar / s.targetPressureBar) + '%';

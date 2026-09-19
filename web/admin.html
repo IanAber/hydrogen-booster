@@ -374,10 +374,7 @@ function sensorOptions() {
 function tempSensorOptions() {
   return [
     { value: '', label: t('opt_unused') },
-    { value: 'Hyd1Temp', label: 'Hyd1Temp - ' + t('opt_stage1_hydraulic') },
-    { value: 'Hyd2Temp', label: 'Hyd2Temp - ' + t('opt_stage2_hydraulic') },
-    { value: 'TankTemp', label: 'TankTemp - ' + t('opt_storage_tank_bank') },
-    { value: 'InterStageTemp', label: 'InterStageTemp - ' + t('opt_between_ab_cd') },
+    { value: 'HydOilTemp', label: 'HydOilTemp - ' + t('opt_hydraulic_oil') },
     { value: 'OutputTemp', label: 'OutputTemp - ' + t('opt_final_delivery') },
   ];
 }
@@ -418,7 +415,7 @@ function buildTempChannelRows(channels) {
 
 function readTempChannelRows() {
   const rows = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 2; i++) {
     rows.push({
       enabled: document.getElementById(`tempCh${i}en`).checked,
       assigned: document.getElementById(`tempCh${i}assigned`).value,

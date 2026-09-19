@@ -96,7 +96,7 @@ type TempChannelConfig struct {
 // TempChannelCount matches the number of temperature readings the system
 // uses (see allTempSensors in controller.go) - one DS18B20 slot per
 // logical reading.
-const TempChannelCount = 5
+const TempChannelCount = 2
 
 // TempModuleConfig configures the DS18B20 1-Wire temperature sensors.
 // The temperatures this feeds change slowly (minutes, not milliseconds),
@@ -246,10 +246,7 @@ func DefaultConfig() Config {
 			PollPeriod:  5 * time.Second,
 			LiveEnabled: false,
 			Channels: [TempChannelCount]TempChannelConfig{
-				{Enabled: true, Assigned: Hyd1Temp},
-				{Enabled: true, Assigned: Hyd2Temp},
-				{Enabled: true, Assigned: TankTemp},
-				{Enabled: true, Assigned: InterStageTemp},
+				{Enabled: true, Assigned: HydOilTemp},
 				{Enabled: true, Assigned: OutputTemp},
 			},
 		},

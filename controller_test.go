@@ -68,17 +68,6 @@ func TestDeliveredMassStopsAfterJobCompletes(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	// Prime the simulated temperature readings once before Start
-	// captures its baseline - otherwise ReadTempC's "not populated yet"
-	// fallback (20C) vs. the real simulated value step() fills in
-	// (~15C) would itself swing the mass estimate, an artifact of this
-	// test running faster than the background ticker rather than
-	// anything a real user could hit (by the time anyone could possibly
-	// click Start, the ticker has been running for seconds already).
-	// While not running, this same step also releases output pressure
-	// toward 0 (5 -> 2), which the tick count below accounts for.
-	io.step()
-
 	// A low target pressure so the fill completes quickly on the
 	// pressure condition (output pressure climbs while running) rather
 	// than needing to wait on mass.
@@ -127,8 +116,6 @@ func TestDeliveredMassFreezesOnOperatorStop(t *testing.T) {
 	io := NewSimulatedIO()
 	defer io.Close()
 	c := NewController(live, io)
-
-	io.step() // see TestDeliveredMassStopsAfterJobCompletes for why
 
 	if err := c.Start(JobRequest{TargetPressureBar: 350, TargetMassKg: 999, Nozzle: Nozzle350}); err != nil {
 		t.Fatal(err)
@@ -228,8 +215,6 @@ func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
 
 	d := NewDispenseLog(t.TempDir() + "/dispense-log.jsonl")
 	c.SetDispenseLog(d)
-
-	io.step() // see TestDeliveredMassStopsAfterJobCompletes for why
 
 	if err := c.Start(JobRequest{TargetPressureBar: 6, TargetMassKg: 999, Nozzle: Nozzle350, CustomerCode: "5551234567"}); err != nil {
 		t.Fatal(err)

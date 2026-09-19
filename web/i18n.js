@@ -29,6 +29,7 @@ const I18N = {
     idx_output_pressure: "Output pressure", idx_output_temperature: "Output temperature",
     idx_delivered_mass: "Delivered mass", idx_vent_valve: "Vent valve", idx_elapsed: "Elapsed",
     idx_storage_tank: "Storage Tank", idx_tank_pressure: "Tank pressure", idx_tank_temperature: "Tank temperature",
+    idx_hyd_oil_temperature: "Hydraulic oil temperature",
     idx_pressure_input_module: "Pressure input module", idx_hydraulic_stages: "Hydraulic Stages",
     idx_direction: "Direction", idx_hyd_pressure: "Hyd. pressure", idx_strokes: "Strokes",
 
@@ -71,6 +72,7 @@ const I18N = {
     diag_can_live: "CAN: LIVE", diag_can_live_fault: "CAN: LIVE (fault)", diag_can_simulation: "CAN: SIMULATION",
     diag_group_stage1: "Stage 1", diag_group_stage2: "Stage 2", diag_group_storage_tank: "Storage Tank",
     diag_group_inter_stage: "Inter-stage", diag_group_output_nozzle: "Output / Nozzle",
+    diag_group_hydraulic_oil: "Hydraulic Oil",
     diag_valve_s1_dir: "Stage 1 Direction", diag_valve_s1_pulse: "Stage 1 Pulse",
     diag_valve_s2_dir: "Stage 2 Direction", diag_valve_s2_pulse: "Stage 2 Pulse", diag_valve_vent: "Vent Valve",
 
@@ -115,7 +117,8 @@ const I18N = {
     opt_unused: "(unused)", opt_none_selected: "(none selected)",
     opt_stage1_hydraulic: "Stage 1 hydraulic", opt_stage2_hydraulic: "Stage 2 hydraulic",
     opt_storage_tank_bank: "storage tank bank", opt_between_ab_cd: "between AB and CD",
-    opt_final_delivery: "final delivery", opt_stage1_direction: "Stage 1 direction",
+    opt_final_delivery: "final delivery", opt_hydraulic_oil: "hydraulic oil",
+    opt_stage1_direction: "Stage 1 direction",
     opt_stage1_pulse: "Stage 1 pulse", opt_stage2_direction: "Stage 2 direction", opt_stage2_pulse: "Stage 2 pulse",
 
     admin_no_channels: "No channels enabled/assigned yet.", admin_simulated: "simulated",
@@ -144,6 +147,7 @@ const I18N = {
     idx_delivered_mass: "Masa suministrada", idx_vent_valve: "Válvula de purga", idx_elapsed: "Transcurrido",
     idx_storage_tank: "Depósito de almacenamiento", idx_tank_pressure: "Presión del depósito",
     idx_tank_temperature: "Temperatura del depósito", idx_pressure_input_module: "Módulo de entrada de presión",
+    idx_hyd_oil_temperature: "Temperatura del aceite hidráulico",
     idx_hydraulic_stages: "Etapas hidráulicas", idx_direction: "Dirección",
     idx_hyd_pressure: "Presión hidráulica", idx_strokes: "Carreras",
 
@@ -187,6 +191,7 @@ const I18N = {
     diag_can_live: "CAN: EN VIVO", diag_can_live_fault: "CAN: EN VIVO (fallo)", diag_can_simulation: "CAN: SIMULACIÓN",
     diag_group_stage1: "Etapa 1", diag_group_stage2: "Etapa 2", diag_group_storage_tank: "Depósito de almacenamiento",
     diag_group_inter_stage: "Entre etapas", diag_group_output_nozzle: "Salida / Boquilla",
+    diag_group_hydraulic_oil: "Aceite hidráulico",
     diag_valve_s1_dir: "Dirección Etapa 1", diag_valve_s1_pulse: "Pulso Etapa 1",
     diag_valve_s2_dir: "Dirección Etapa 2", diag_valve_s2_pulse: "Pulso Etapa 2", diag_valve_vent: "Válvula de purga",
 
@@ -232,7 +237,8 @@ const I18N = {
     opt_unused: "(sin usar)", opt_none_selected: "(ninguno seleccionado)",
     opt_stage1_hydraulic: "hidráulico Etapa 1", opt_stage2_hydraulic: "hidráulico Etapa 2",
     opt_storage_tank_bank: "banco de depósitos de almacenamiento", opt_between_ab_cd: "entre AB y CD",
-    opt_final_delivery: "suministro final", opt_stage1_direction: "dirección Etapa 1",
+    opt_final_delivery: "suministro final", opt_hydraulic_oil: "aceite hidráulico",
+    opt_stage1_direction: "dirección Etapa 1",
     opt_stage1_pulse: "pulso Etapa 1", opt_stage2_direction: "dirección Etapa 2", opt_stage2_pulse: "pulso Etapa 2",
 
     admin_no_channels: "Aún no hay canales habilitados/asignados.", admin_simulated: "simulado",
@@ -261,6 +267,7 @@ const I18N = {
     idx_delivered_mass: "Masse livrée", idx_vent_valve: "Vanne d'évent", idx_elapsed: "Écoulé",
     idx_storage_tank: "Réservoir de stockage", idx_tank_pressure: "Pression du réservoir",
     idx_tank_temperature: "Température du réservoir", idx_pressure_input_module: "Module d'entrée de pression",
+    idx_hyd_oil_temperature: "Température de l'huile hydraulique",
     idx_hydraulic_stages: "Étages hydrauliques", idx_direction: "Direction",
     idx_hyd_pressure: "Pression hydraulique", idx_strokes: "Courses",
 
@@ -304,6 +311,7 @@ const I18N = {
     diag_can_live: "CAN : EN DIRECT", diag_can_live_fault: "CAN : EN DIRECT (défaut)", diag_can_simulation: "CAN : SIMULATION",
     diag_group_stage1: "Étage 1", diag_group_stage2: "Étage 2", diag_group_storage_tank: "Réservoir de stockage",
     diag_group_inter_stage: "Inter-étages", diag_group_output_nozzle: "Sortie / Buse",
+    diag_group_hydraulic_oil: "Huile hydraulique",
     diag_valve_s1_dir: "Direction Étage 1", diag_valve_s1_pulse: "Impulsion Étage 1",
     diag_valve_s2_dir: "Direction Étage 2", diag_valve_s2_pulse: "Impulsion Étage 2", diag_valve_vent: "Vanne d'évent",
 
@@ -349,7 +357,8 @@ const I18N = {
     opt_unused: "(inutilisé)", opt_none_selected: "(aucun sélectionné)",
     opt_stage1_hydraulic: "hydraulique Étage 1", opt_stage2_hydraulic: "hydraulique Étage 2",
     opt_storage_tank_bank: "banc de réservoirs de stockage", opt_between_ab_cd: "entre AB et CD",
-    opt_final_delivery: "livraison finale", opt_stage1_direction: "direction Étage 1",
+    opt_final_delivery: "livraison finale", opt_hydraulic_oil: "huile hydraulique",
+    opt_stage1_direction: "direction Étage 1",
     opt_stage1_pulse: "impulsion Étage 1", opt_stage2_direction: "direction Étage 2", opt_stage2_pulse: "impulsion Étage 2",
 
     admin_no_channels: "Aucune voie activée/assignée pour le moment.", admin_simulated: "simulé",
@@ -377,6 +386,7 @@ const I18N = {
     idx_output_pressure: "Ausgangsdruck", idx_output_temperature: "Ausgangstemperatur",
     idx_delivered_mass: "Abgegebene Masse", idx_vent_valve: "Entlüftungsventil", idx_elapsed: "Verstrichen",
     idx_storage_tank: "Speichertank", idx_tank_pressure: "Tankdruck", idx_tank_temperature: "Tanktemperatur",
+    idx_hyd_oil_temperature: "Hydrauliköltemperatur",
     idx_pressure_input_module: "Druckeingangsmodul", idx_hydraulic_stages: "Hydraulikstufen",
     idx_direction: "Richtung", idx_hyd_pressure: "Hydraulikdruck", idx_strokes: "Hubübe",
 
@@ -420,6 +430,7 @@ const I18N = {
     diag_can_live: "CAN: LIVE", diag_can_live_fault: "CAN: LIVE (Störung)", diag_can_simulation: "CAN: SIMULATION",
     diag_group_stage1: "Stufe 1", diag_group_stage2: "Stufe 2", diag_group_storage_tank: "Speichertank",
     diag_group_inter_stage: "Zwischenstufe", diag_group_output_nozzle: "Ausgang / Düse",
+    diag_group_hydraulic_oil: "Hydrauliköl",
     diag_valve_s1_dir: "Richtung Stufe 1", diag_valve_s1_pulse: "Impuls Stufe 1",
     diag_valve_s2_dir: "Richtung Stufe 2", diag_valve_s2_pulse: "Impuls Stufe 2", diag_valve_vent: "Entlüftungsventil",
 
@@ -464,7 +475,8 @@ const I18N = {
     opt_unused: "(ungenutzt)", opt_none_selected: "(keines ausgewählt)",
     opt_stage1_hydraulic: "Hydraulik Stufe 1", opt_stage2_hydraulic: "Hydraulik Stufe 2",
     opt_storage_tank_bank: "Speichertankbank", opt_between_ab_cd: "zwischen AB und CD",
-    opt_final_delivery: "Endabgabe", opt_stage1_direction: "Richtung Stufe 1",
+    opt_final_delivery: "Endabgabe", opt_hydraulic_oil: "Hydrauliköl",
+    opt_stage1_direction: "Richtung Stufe 1",
     opt_stage1_pulse: "Impuls Stufe 1", opt_stage2_direction: "Richtung Stufe 2", opt_stage2_pulse: "Impuls Stufe 2",
 
     admin_no_channels: "Noch keine Kanäle aktiviert/zugewiesen.", admin_simulated: "simuliert",
@@ -493,6 +505,7 @@ const I18N = {
     idx_delivered_mass: "Massa entregue", idx_vent_valve: "Válvula de purga", idx_elapsed: "Decorrido",
     idx_storage_tank: "Reservatório de armazenamento", idx_tank_pressure: "Pressão do reservatório",
     idx_tank_temperature: "Temperatura do reservatório", idx_pressure_input_module: "Módulo de entrada de pressão",
+    idx_hyd_oil_temperature: "Temperatura do óleo hidráulico",
     idx_hydraulic_stages: "Estágios hidráulicos", idx_direction: "Direção",
     idx_hyd_pressure: "Pressão hidráulica", idx_strokes: "Cursos",
 
@@ -536,6 +549,7 @@ const I18N = {
     diag_can_live: "CAN: AO VIVO", diag_can_live_fault: "CAN: AO VIVO (falha)", diag_can_simulation: "CAN: SIMULAÇÃO",
     diag_group_stage1: "Estágio 1", diag_group_stage2: "Estágio 2", diag_group_storage_tank: "Reservatório de armazenamento",
     diag_group_inter_stage: "Entre estágios", diag_group_output_nozzle: "Saída / Bocal",
+    diag_group_hydraulic_oil: "Óleo hidráulico",
     diag_valve_s1_dir: "Direção Estágio 1", diag_valve_s1_pulse: "Pulso Estágio 1",
     diag_valve_s2_dir: "Direção Estágio 2", diag_valve_s2_pulse: "Pulso Estágio 2", diag_valve_vent: "Válvula de purga",
 
@@ -581,7 +595,8 @@ const I18N = {
     opt_unused: "(não usado)", opt_none_selected: "(nenhum selecionado)",
     opt_stage1_hydraulic: "hidráulico Estágio 1", opt_stage2_hydraulic: "hidráulico Estágio 2",
     opt_storage_tank_bank: "banco de reservatórios de armazenamento", opt_between_ab_cd: "entre AB e CD",
-    opt_final_delivery: "entrega final", opt_stage1_direction: "direção Estágio 1",
+    opt_final_delivery: "entrega final", opt_hydraulic_oil: "óleo hidráulico",
+    opt_stage1_direction: "direção Estágio 1",
     opt_stage1_pulse: "pulso Estágio 1", opt_stage2_direction: "direção Estágio 2", opt_stage2_pulse: "pulso Estágio 2",
 
     admin_no_channels: "Ainda sem canais ativados/atribuídos.", admin_simulated: "simulado",

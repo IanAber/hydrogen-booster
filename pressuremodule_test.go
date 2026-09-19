@@ -49,8 +49,8 @@ func TestPollOnceParsesAndCalibratesAgainstConfirmedFrames(t *testing.T) {
 
 	// A sensor not on this module at all must report not-ok, so
 	// CompositeIO knows to fall back to the base simulated IO.
-	if _, ok := pm.ReadPressureBar(Hyd1Temp); ok {
-		t.Error("Hyd1Temp should not be reported as assigned to the CAN module")
+	if _, ok := pm.ReadPressureBar(HydOilTemp); ok {
+		t.Error("HydOilTemp should not be reported as assigned to the CAN module")
 	}
 
 	st := pm.Status()
@@ -149,7 +149,7 @@ func TestSetSimValueRejectsUnassignedSensor(t *testing.T) {
 	live := NewLiveConfig(cfg)
 	pm := NewPressureModule(live, nil)
 
-	if err := pm.SetSimValue(Hyd1Temp, 20); err == nil {
+	if err := pm.SetSimValue(HydOilTemp, 20); err == nil {
 		t.Error("expected an error setting a sim value for a sensor not assigned to this module")
 	}
 }
