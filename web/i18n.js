@@ -66,7 +66,7 @@ const I18N = {
     phase_idle: "Idle", phase_filling: "Filling", phase_venting: "Venting",
     phase_complete: "Complete", phase_fault: "Fault",
 
-    diag_page_title: "Live Diagnostics", diag_valves: "Valves", diag_sensors: "Sensors",
+    diag_page_title: "Live Diagnostics", diag_valves: "Valves/Relays", diag_sensors: "Sensors",
     diag_digital_inputs: "Digital Inputs",
     diag_energised: "Energised", diag_off: "Off", diag_fault: "FAULT",
     diag_temperature: "Temperature", diag_pressure: "Pressure",
@@ -202,7 +202,7 @@ const I18N = {
     phase_idle: "Inactivo", phase_filling: "Llenando", phase_venting: "Purgando",
     phase_complete: "Completo", phase_fault: "Fallo",
 
-    diag_page_title: "Diagnóstico en vivo", diag_valves: "Válvulas", diag_sensors: "Sensores",
+    diag_page_title: "Diagnóstico en vivo", diag_valves: "Válvulas/Relés", diag_sensors: "Sensores",
     diag_digital_inputs: "Entradas digitales",
     diag_energised: "Energizada", diag_off: "Apagada", diag_fault: "FALLO",
     diag_temperature: "Temperatura", diag_pressure: "Presión",
@@ -339,7 +339,7 @@ const I18N = {
     phase_idle: "Inactif", phase_filling: "Remplissage", phase_venting: "Évacuation",
     phase_complete: "Terminé", phase_fault: "Défaut",
 
-    diag_page_title: "Diagnostic en direct", diag_valves: "Vannes", diag_sensors: "Capteurs",
+    diag_page_title: "Diagnostic en direct", diag_valves: "Vannes/Relais", diag_sensors: "Capteurs",
     diag_digital_inputs: "Entrées numériques",
     diag_energised: "Alimentée", diag_off: "Éteinte", diag_fault: "DÉFAUT",
     diag_temperature: "Température", diag_pressure: "Pression",
@@ -475,7 +475,7 @@ const I18N = {
     phase_idle: "Bereit", phase_filling: "Füllen", phase_venting: "Entlüften",
     phase_complete: "Abgeschlossen", phase_fault: "Störung",
 
-    diag_page_title: "Live-Diagnose", diag_valves: "Ventile", diag_sensors: "Sensoren",
+    diag_page_title: "Live-Diagnose", diag_valves: "Ventile/Relais", diag_sensors: "Sensoren",
     diag_digital_inputs: "Digitale Eingänge",
     diag_energised: "Angesteuert", diag_off: "Aus", diag_fault: "STÖRUNG",
     diag_temperature: "Temperatur", diag_pressure: "Druck",
@@ -611,7 +611,7 @@ const I18N = {
     phase_idle: "Inativo", phase_filling: "Enchendo", phase_venting: "Purgando",
     phase_complete: "Concluído", phase_fault: "Falha",
 
-    diag_page_title: "Diagnóstico ao vivo", diag_valves: "Válvulas", diag_sensors: "Sensores",
+    diag_page_title: "Diagnóstico ao vivo", diag_valves: "Válvulas/Relés", diag_sensors: "Sensores",
     diag_digital_inputs: "Entradas digitais",
     diag_energised: "Energizada", diag_off: "Desligada", diag_fault: "FALHA",
     diag_temperature: "Temperatura", diag_pressure: "Pressão",
