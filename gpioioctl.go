@@ -18,7 +18,10 @@ const (
 )
 
 // gpio_v2_line_flag bits (only the ones this driver uses).
-const gpioV2LineFlagOutput = 1 << 3
+const (
+	gpioV2LineFlagInput  = 1 << 2
+	gpioV2LineFlagOutput = 1 << 3
+)
 
 const gpioV2LineAttrIDOutputValues = 2
 

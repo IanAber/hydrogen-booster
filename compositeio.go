@@ -12,10 +12,11 @@ type CompositeIO struct {
 	pm   *PressureModule
 	tm   *TemperatureModule
 	rm   *RelayModule
+	dim  *DigitalInputModule
 }
 
-func NewCompositeIO(base IO, pm *PressureModule, tm *TemperatureModule, rm *RelayModule) *CompositeIO {
-	return &CompositeIO{base: base, pm: pm, tm: tm, rm: rm}
+func NewCompositeIO(base IO, pm *PressureModule, tm *TemperatureModule, rm *RelayModule, dim *DigitalInputModule) *CompositeIO {
+	return &CompositeIO{base: base, pm: pm, tm: tm, rm: rm, dim: dim}
 }
 
 func (c *CompositeIO) Close() error { return c.base.Close() }
@@ -72,4 +73,14 @@ func (c *CompositeIO) ReadTempC(s SensorInput) (float64, error) {
 		return v, nil
 	}
 	return c.base.ReadTempC(s)
+}
+
+// ReadDigitalInput serves the digital input module's reading for any
+// signal assigned to one of its enabled channels, and falls back to the
+// base IO (simulated) for anything not wired to it.
+func (c *CompositeIO) ReadDigitalInput(d DigitalInput) (bool, error) {
+	if v, ok := c.dim.ReadDigitalInput(d); ok {
+		return v, nil
+	}
+	return c.base.ReadDigitalInput(d)
 }

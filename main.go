@@ -76,19 +76,28 @@ func main() {
 	go rm.Run()
 	defer rm.Stop()
 
-	// Everything else - any relay/pressure/temperature channel not
-	// assigned to a real module above - is still simulated pending real
-	// drivers for that hardware.
+	// Real hardware driver #4: digital feedback inputs (hydraulic oil
+	// level, motor-powered confirmation) via the SoC's own GPIO
+	// controller, a different chip than the relay expander above. Same
+	// live/simulation switch; only reads signals an operator has
+	// assigned a line to from the admin screen.
+	dim := NewDigitalInputModule(live, OpenDigitalInputLines)
+	go dim.Run()
+	defer dim.Stop()
+
+	// Everything else - any relay/pressure/temperature/digital-input
+	// channel not assigned to a real module above - is still simulated
+	// pending real drivers for that hardware.
 	hw := NewSimulatedIO()
 	defer hw.Close()
 
-	io := NewCompositeIO(hw, pm, tm, rm)
+	io := NewCompositeIO(hw, pm, tm, rm, dim)
 
 	ctrl := NewController(live, io)
 	ctrl.SetDispenseLog(dispenseLog)
 	ctrl.SetValidCodes(validCodes)
 	go ctrl.Run()
 
-	srv := NewWebServer(ctrl, live, pm, tm, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
+	srv := NewWebServer(ctrl, live, pm, tm, dim, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
 	log.Fatal(srv.ListenAndServe())
 }

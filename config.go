@@ -123,9 +123,9 @@ type RelayChannelConfig struct {
 	Port     int         // 0-15, the MCP23017 pin driving this relay
 }
 
-// RelayChannelCount matches the number of valves the system drives (see
-// allRelays in controller.go) - one MCP23017 port slot per valve.
-const RelayChannelCount = 5
+// RelayChannelCount matches the number of valves/pumps the system drives
+// (see allRelays in controller.go) - one MCP23017 port slot per output.
+const RelayChannelCount = 7
 
 // RelayModuleConfig configures the MCP23017 relay outputs, addressed via
 // the kernel gpiochip character device (e.g. /dev/gpiochip16).
@@ -138,6 +138,34 @@ type RelayModuleConfig struct {
 	// operator has confirmed port wiring from the admin screen.
 	LiveEnabled bool
 	Channels    [RelayChannelCount]RelayChannelConfig
+}
+
+// DigitalInputChannelConfig maps one physical digital input on the SoC's
+// own GPIO controller to a logical feedback signal. Port is restricted
+// to validDigitalInputPorts (see liveconfig.go) - a hardware constraint
+// on this board, unlike the relay outputs' free 0-15 range.
+type DigitalInputChannelConfig struct {
+	Enabled  bool
+	Assigned DigitalInput // meaningful only when Enabled
+	Port     int
+}
+
+// DigitalInputChannelCount matches the number of digital feedback
+// signals the system reads (see allDigitalInputs in controller.go).
+const DigitalInputChannelCount = 3
+
+// DigitalInputModuleConfig configures the digital feedback inputs
+// (hydraulic oil level, motor-powered confirmation), addressed via the
+// kernel gpiochip character device on a different chip than the relay
+// outputs (e.g. /dev/gpiochip0 vs. the relays' /dev/gpiochip16).
+type DigitalInputModuleConfig struct {
+	Chip string // gpiochip device path, e.g. "/dev/gpiochip0"
+	// LiveEnabled selects the data source for every assigned channel:
+	// true reads the real GPIO line; false serves an editable simulated
+	// value instead. Starts false so nothing is read from real hardware
+	// until an operator has confirmed port wiring from the admin screen.
+	LiveEnabled bool
+	Channels    [DigitalInputChannelCount]DigitalInputChannelConfig
 }
 
 // TankConfig describes the low-pressure storage bank feeding cylinder A,
@@ -162,16 +190,17 @@ type Config struct {
 	// one of the codes in ValidLanguages (io.go). Editable from the
 	// admin screen; does not affect anything on the backend besides
 	// this one setting being served back to the pages.
-	Language    string
-	PollPeriod  time.Duration
-	Stage1      StageConfig
-	Stage2      StageConfig
-	Safety      SafetyConfig
-	Tank        TankConfig
-	Vent        VentConfig
-	CanModule   CanModuleConfig
-	TempModule  TempModuleConfig
-	RelayModule RelayModuleConfig
+	Language           string
+	PollPeriod         time.Duration
+	Stage1             StageConfig
+	Stage2             StageConfig
+	Safety             SafetyConfig
+	Tank               TankConfig
+	Vent               VentConfig
+	CanModule          CanModuleConfig
+	TempModule         TempModuleConfig
+	RelayModule        RelayModuleConfig
+	DigitalInputModule DigitalInputModuleConfig
 }
 
 // DefaultConfig gives sane starting values for commissioning against the
@@ -262,6 +291,22 @@ func DefaultConfig() Config {
 				{Enabled: true, Assigned: Valve2A, Port: 2},
 				{Enabled: true, Assigned: Valve2B, Port: 3},
 				{Enabled: true, Assigned: VentValve, Port: 4},
+				{Enabled: true, Assigned: Pump1, Port: 5},
+				{Enabled: true, Assigned: Pump2, Port: 6},
+			},
+		},
+		// Digital feedback inputs on the SoC's own GPIO controller
+		// (gpiochip0) - a different chip than the relay outputs above.
+		// Port choices below are placeholders from the allowed set
+		// (validDigitalInputPorts, liveconfig.go); confirm each against
+		// the real wiring before enabling live data.
+		DigitalInputModule: DigitalInputModuleConfig{
+			Chip:        "/dev/gpiochip0",
+			LiveEnabled: false,
+			Channels: [DigitalInputChannelCount]DigitalInputChannelConfig{
+				{Enabled: true, Assigned: HydraulicOilLevel, Port: 2},
+				{Enabled: true, Assigned: Motor1Powered, Port: 3},
+				{Enabled: true, Assigned: Motor2Powered, Port: 5},
 			},
 		},
 	}

@@ -140,6 +140,31 @@ func TestDeliveredMassFreezesOnOperatorStop(t *testing.T) {
 	}
 }
 
+func TestPumpsOnForWholeFillOffAfterStop(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 350, TargetMassKg: 999, Nozzle: Nozzle350}); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := io.RelayState(Pump1); !on {
+		t.Error("Pump1 should be on once a job has started")
+	}
+	if on, _ := io.RelayState(Pump2); !on {
+		t.Error("Pump2 should be on once a job has started")
+	}
+
+	c.Stop()
+	if on, _ := io.RelayState(Pump1); on {
+		t.Error("Pump1 should be off after Stop")
+	}
+	if on, _ := io.RelayState(Pump2); on {
+		t.Error("Pump2 should be off after Stop")
+	}
+}
+
 // TestNoSpuriousFaultWhileIdle reproduces the other half of the reported
 // bug: the customer screen showing a Fault phase before any job had ever
 // run, because simulated hydraulic pressure climbed unconditionally from
@@ -159,6 +184,54 @@ func TestNoSpuriousFaultWhileIdle(t *testing.T) {
 
 	if got := c.Status(); got.Phase == PhaseFault {
 		t.Errorf("phase = fault after a long idle period with no job ever started; faults: %v", got.Faults)
+	}
+}
+
+func TestSuperviseSafetyFaultsOnLowHydraulicOil(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	io.digitalInputs[HydraulicOilLevel] = true // high/1 = insufficient oil
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got != PhaseFault {
+		t.Fatalf("phase = %v, want fault", got)
+	}
+}
+
+func TestSuperviseSafetyFaultsOnMotorNotConfirmedRunning(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Pump1 commanded on (as Start() would), but Motor1Powered reads
+	// high instead of the expected low - the motor never confirmed
+	// running.
+	_ = io.SetRelay(Pump1, true)
+	io.digitalInputs[Motor1Powered] = true
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got != PhaseFault {
+		t.Fatalf("phase = %v, want fault", got)
+	}
+}
+
+func TestSuperviseSafetyNoFaultWhenMotorConfirmsRunning(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Pump1 commanded on, Motor1Powered correctly reads low - no fault.
+	_ = io.SetRelay(Pump1, true)
+	io.digitalInputs[Motor1Powered] = false
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got == PhaseFault {
+		t.Fatalf("phase = fault, want idle (motor confirmed running); faults: %v", c.Status().Faults)
 	}
 }
 

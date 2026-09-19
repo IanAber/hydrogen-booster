@@ -173,6 +173,28 @@ func (c *Controller) superviseSafety() {
 			check("Temperature (C)", temp, safety.MaxTempC)
 		}
 	}
+
+	if level, err := c.io.ReadDigitalInput(HydraulicOilLevel); err == nil && level {
+		c.raiseFault("Hydraulic oil level low - emergency stop")
+	}
+
+	pumpsMotors := []struct {
+		pump  RelayOutput
+		motor DigitalInput
+		label string
+	}{
+		{Pump1, Motor1Powered, "1"},
+		{Pump2, Motor2Powered, "2"},
+	}
+	for _, pm := range pumpsMotors {
+		pumpOn, err := c.io.RelayState(pm.pump)
+		if err != nil || !pumpOn {
+			continue
+		}
+		if motorHigh, err := c.io.ReadDigitalInput(pm.motor); err == nil && motorHigh {
+			c.raiseFault(fmt.Sprintf("Pump %s powered but Motor %s not confirmed running - emergency stop", pm.label, pm.label))
+		}
+	}
 }
 
 func (c *Controller) raiseFault(msg string) {
@@ -187,6 +209,8 @@ func (c *Controller) raiseFault(msg string) {
 		c.stage2.Stop()
 		_ = c.io.SetRelay(VentValve, false)
 		setIORunning(c.io, false)
+		_ = c.io.SetRelay(Pump1, false)
+		_ = c.io.SetRelay(Pump2, false)
 		mass := c.deliveredMassKg()
 		c.mu.Lock()
 		c.finalDeliveredMassKg = mass
@@ -248,6 +272,8 @@ func (c *Controller) Start(job JobRequest) error {
 	}
 	c.phase = PhaseFilling
 	setIORunning(c.io, true)
+	_ = c.io.SetRelay(Pump1, true)
+	_ = c.io.SetRelay(Pump2, true)
 
 	c.stage1.Start()
 	c.stage2.Start()
@@ -290,6 +316,8 @@ func (c *Controller) Stop() {
 	c.stage2.Stop()
 	_ = c.io.SetRelay(VentValve, false)
 	setIORunning(c.io, false)
+	_ = c.io.SetRelay(Pump1, false)
+	_ = c.io.SetRelay(Pump2, false)
 	// deliveredMassKg locks internally, so this must happen before the
 	// lock below, not inside it (sync.Mutex isn't reentrant).
 	mass := c.deliveredMassKg()
@@ -354,6 +382,8 @@ func (c *Controller) superviseJob() {
 	c.stage1.Stop()
 	c.stage2.Stop()
 	setIORunning(c.io, false)
+	_ = c.io.SetRelay(Pump1, false)
+	_ = c.io.SetRelay(Pump2, false)
 	c.mu.Lock()
 	c.finalDeliveredMassKg = mass
 	c.mu.Unlock()
@@ -389,12 +419,13 @@ func (c *Controller) superviseJob() {
 	}
 }
 
-// allRelays/allPressureSensors/allTempSensors enumerate every physical
-// point on the skid, for the diagnostics page - independent of which
-// ones a running job currently cares about.
-var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve}
+// allRelays/allPressureSensors/allTempSensors/allDigitalInputs enumerate
+// every physical point on the skid, for the diagnostics page -
+// independent of which ones a running job currently cares about.
+var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve, Pump1, Pump2}
 var allPressureSensors = []SensorInput{Hyd1Pressure, Hyd2Pressure, TankPressure, InterStagePressure, OutputPressure}
 var allTempSensors = []SensorInput{HydOilTemp, OutputTemp}
+var allDigitalInputs = []DigitalInput{HydraulicOilLevel, Motor1Powered, Motor2Powered}
 
 type ValveStatus struct {
 	Name string `json:"name"`
@@ -409,9 +440,19 @@ type SensorStatus struct {
 	Ok    bool    `json:"ok"` // false if the read errored (fault/not wired)
 }
 
+// DigitalInputStatus reports one feedback signal's raw electrical level -
+// kept as its own array (rather than folded into SensorStatus.Kind)
+// since it's a boolean level, not a calibrated numeric reading.
+type DigitalInputStatus struct {
+	Name string `json:"name"`
+	High bool   `json:"high"`
+	Ok   bool   `json:"ok"` // false if the read errored (fault/not wired)
+}
+
 type Diagnostics struct {
-	Valves  []ValveStatus  `json:"valves"`
-	Sensors []SensorStatus `json:"sensors"`
+	Valves        []ValveStatus        `json:"valves"`
+	Sensors       []SensorStatus       `json:"sensors"`
+	DigitalInputs []DigitalInputStatus `json:"digitalInputs"`
 }
 
 // Diagnostics reads every valve and sensor directly from IO, bypassing
@@ -431,6 +472,10 @@ func (c *Controller) Diagnostics() Diagnostics {
 	for _, s := range allTempSensors {
 		v, err := c.io.ReadTempC(s)
 		d.Sensors = append(d.Sensors, SensorStatus{Name: s.String(), Kind: "temp", Value: v, Ok: err == nil})
+	}
+	for _, di := range allDigitalInputs {
+		v, err := c.io.ReadDigitalInput(di)
+		d.DigitalInputs = append(d.DigitalInputs, DigitalInputStatus{Name: di.String(), High: v, Ok: err == nil})
 	}
 	return d
 }

@@ -70,3 +70,36 @@ func TestRelayModuleSurvivesFileRoundTrip(t *testing.T) {
 		t.Errorf("Channels[0].Assigned = %v, want Valve1A", loaded.RelayModule.Channels[0].Assigned)
 	}
 }
+
+// TestDigitalInputModuleSurvivesFileRoundTrip mirrors the same guarantee
+// for the digital input module's line assignment.
+func TestDigitalInputModuleSurvivesFileRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.json"
+
+	base := DefaultConfig()
+	base.DigitalInputModule.Chip = "/dev/gpiochip3"
+	base.DigitalInputModule.LiveEnabled = true
+	base.DigitalInputModule.Channels[0].Port = 13
+
+	if err := SaveConfigFile(path, base); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, ok, err := LoadConfigFile(path, DefaultConfig())
+	if err != nil || !ok {
+		t.Fatalf("load failed: ok=%v err=%v", ok, err)
+	}
+	if loaded.DigitalInputModule.Chip != "/dev/gpiochip3" {
+		t.Errorf("Chip = %q, want /dev/gpiochip3", loaded.DigitalInputModule.Chip)
+	}
+	if !loaded.DigitalInputModule.LiveEnabled {
+		t.Error("LiveEnabled did not round-trip as true")
+	}
+	if loaded.DigitalInputModule.Channels[0].Port != 13 {
+		t.Errorf("Channels[0].Port = %v, want 13", loaded.DigitalInputModule.Channels[0].Port)
+	}
+	if loaded.DigitalInputModule.Channels[0].Assigned != HydraulicOilLevel {
+		t.Errorf("Channels[0].Assigned = %v, want HydraulicOilLevel", loaded.DigitalInputModule.Channels[0].Assigned)
+	}
+}

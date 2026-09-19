@@ -58,6 +58,18 @@
   .valve-box .name { font-size: 13px; font-weight: 600; }
   .valve-box .state { font-size: 12px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
   .valve-box.on .state { color: var(--good); }
+  .digital-box {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; text-align: center;
+  }
+  .digital-box .light {
+    width: 16px; height: 16px; border-radius: 50%; margin: 0 auto 10px;
+    background: #3a4750; box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
+  }
+  .digital-box.bad .light { background: var(--bad); box-shadow: 0 0 10px var(--bad); }
+  .digital-box .name { font-size: 13px; font-weight: 600; }
+  .digital-box .state { font-size: 12px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+  .digital-box.bad .state { color: var(--bad); }
   .sensor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
   .sensor-box { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
   .sensor-box h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600;
@@ -99,6 +111,11 @@
     <div class="sensor-grid" id="sensorGrid"></div>
   </div>
 
+  <div class="card">
+    <h2 data-i18n="diag_digital_inputs">Digital Inputs</h2>
+    <div class="valve-grid" id="digitalInputGrid"></div>
+  </div>
+
   <div class="muted" id="connMsg"></div>
 
 </main>
@@ -126,6 +143,17 @@ function valveLabelKey(name) {
     case 'Valve2A(dir)': return 'diag_valve_s2_dir';
     case 'Valve2B(pulse)': return 'diag_valve_s2_pulse';
     case 'VentValve': return 'diag_valve_vent';
+    case 'Pump1': return 'diag_valve_pump1';
+    case 'Pump2': return 'diag_valve_pump2';
+    default: return null;
+  }
+}
+
+function digitalInputLabelKey(name) {
+  switch (name) {
+    case 'HydraulicOilLevel': return 'diag_input_hydraulic_oil_level';
+    case 'Motor1Powered': return 'diag_input_motor1_powered';
+    case 'Motor2Powered': return 'diag_input_motor2_powered';
     default: return null;
   }
 }
@@ -167,6 +195,27 @@ function renderSensors(sensors) {
   `).join('');
 }
 
+// renderDigitalInputs shows the "good"/low reading as the default,
+// neutral state (matching the user's stated semantics: 0/low is
+// sufficient oil, and - while its pump is on - a confirmed-running
+// motor) and highlights high/1 as the state worth an operator's
+// attention, the opposite polarity from renderValves' "on = good".
+function renderDigitalInputs(digitalInputs) {
+  const grid = document.getElementById('digitalInputGrid');
+  grid.innerHTML = digitalInputs.map(d => {
+    const key = digitalInputLabelKey(d.name);
+    const label = key ? t(key) : d.name;
+    const bad = d.ok !== false && d.high;
+    return `
+    <div class="digital-box ${bad ? 'bad' : ''}">
+      <div class="light"></div>
+      <div class="name">${label}</div>
+      <div class="state" ${d.ok === false ? 'style="color:var(--bad)"' : ''}>${d.ok === false ? t('diag_fault') : (d.high ? t('diag_input_high') : t('diag_input_low'))}</div>
+    </div>
+  `;
+  }).join('');
+}
+
 async function poll() {
   const connMsg = document.getElementById('connMsg');
   try {
@@ -175,6 +224,7 @@ async function poll() {
     const d = await res.json();
     renderValves(d.valves || []);
     renderSensors(d.sensors || []);
+    renderDigitalInputs(d.digitalInputs || []);
     connMsg.textContent = '';
   } catch (e) {
     connMsg.textContent = t('diag_lost_connection');

@@ -64,7 +64,18 @@
       {"enabled": true, "assigned": "Valve1B(pulse)", "port": 1},
       {"enabled": true, "assigned": "Valve2A(dir)", "port": 2},
       {"enabled": true, "assigned": "Valve2B(pulse)", "port": 3},
-      {"enabled": true, "assigned": "VentValve", "port": 4}
+      {"enabled": true, "assigned": "VentValve", "port": 4},
+      {"enabled": true, "assigned": "Pump1", "port": 5},
+      {"enabled": true, "assigned": "Pump2", "port": 6}
+    ]
+  },
+  "digitalInputModule": {
+    "chip": "/dev/gpiochip0",
+    "liveEnabled": false,
+    "channels": [
+      {"enabled": true, "assigned": "HydraulicOilLevel", "port": 2},
+      {"enabled": true, "assigned": "Motor1Powered", "port": 3},
+      {"enabled": true, "assigned": "Motor2Powered", "port": 5}
     ]
   }
 }

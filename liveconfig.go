@@ -116,18 +116,31 @@ type RelayModuleConfigDTO struct {
 	Channels    []RelayChannelConfigDTO `json:"channels"`
 }
 
+type DigitalInputChannelConfigDTO struct {
+	Enabled  bool   `json:"enabled"`
+	Assigned string `json:"assigned,omitempty"` // signal name (see io.go DigitalInput.String); empty when not Enabled
+	Port     int    `json:"port"`
+}
+
+type DigitalInputModuleConfigDTO struct {
+	Chip        string                         `json:"chip"`
+	LiveEnabled bool                           `json:"liveEnabled"`
+	Channels    []DigitalInputChannelConfigDTO `json:"channels"`
+}
+
 type ConfigDTO struct {
-	SystemName   string               `json:"systemName"`
-	Language     string               `json:"language"`
-	PollPeriodMs int                  `json:"pollPeriodMs"`
-	Stage1       StageConfigDTO       `json:"stage1"`
-	Stage2       StageConfigDTO       `json:"stage2"`
-	Safety       SafetyConfigDTO      `json:"safety"`
-	Tank         TankConfigDTO        `json:"tank"`
-	Vent         VentConfigDTO        `json:"vent"`
-	CanModule    CanModuleConfigDTO   `json:"canModule"`
-	TempModule   TempModuleConfigDTO  `json:"tempModule"`
-	RelayModule  RelayModuleConfigDTO `json:"relayModule"`
+	SystemName         string                      `json:"systemName"`
+	Language           string                      `json:"language"`
+	PollPeriodMs       int                         `json:"pollPeriodMs"`
+	Stage1             StageConfigDTO              `json:"stage1"`
+	Stage2             StageConfigDTO              `json:"stage2"`
+	Safety             SafetyConfigDTO             `json:"safety"`
+	Tank               TankConfigDTO               `json:"tank"`
+	Vent               VentConfigDTO               `json:"vent"`
+	CanModule          CanModuleConfigDTO          `json:"canModule"`
+	TempModule         TempModuleConfigDTO         `json:"tempModule"`
+	RelayModule        RelayModuleConfigDTO        `json:"relayModule"`
+	DigitalInputModule DigitalInputModuleConfigDTO `json:"digitalInputModule"`
 }
 
 func stageToDTO(s StageConfig) StageConfigDTO {
@@ -209,6 +222,20 @@ func relayModuleToDTO(c RelayModuleConfig) RelayModuleConfigDTO {
 	return dto
 }
 
+func digitalInputModuleToDTO(c DigitalInputModuleConfig) DigitalInputModuleConfigDTO {
+	dto := DigitalInputModuleConfigDTO{Chip: c.Chip, LiveEnabled: c.LiveEnabled}
+	for _, ch := range c.Channels {
+		assigned := ""
+		if ch.Enabled {
+			assigned = ch.Assigned.String()
+		}
+		dto.Channels = append(dto.Channels, DigitalInputChannelConfigDTO{
+			Enabled: ch.Enabled, Assigned: assigned, Port: ch.Port,
+		})
+	}
+	return dto
+}
+
 // ToDTO converts the internal Config into the editable shape the admin
 // screen works with.
 func ToDTO(c Config) ConfigDTO {
@@ -230,10 +257,11 @@ func ToDTO(c Config) ConfigDTO {
 			NominalPressureBar: c.Tank.NominalPressureBar,
 			NominalTempC:       c.Tank.NominalTempC,
 		},
-		Vent:        VentConfigDTO{DurationMs: int(c.Vent.Duration / time.Millisecond)},
-		CanModule:   canModuleToDTO(c.CanModule),
-		TempModule:  tempModuleToDTO(c.TempModule),
-		RelayModule: relayModuleToDTO(c.RelayModule),
+		Vent:               VentConfigDTO{DurationMs: int(c.Vent.Duration / time.Millisecond)},
+		CanModule:          canModuleToDTO(c.CanModule),
+		TempModule:         tempModuleToDTO(c.TempModule),
+		RelayModule:        relayModuleToDTO(c.RelayModule),
+		DigitalInputModule: digitalInputModuleToDTO(c.DigitalInputModule),
 	}
 }
 
@@ -340,6 +368,12 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 		return base, err
 	}
 	out.RelayModule = relayCfg
+
+	digitalInputCfg, err := digitalInputModuleFromDTO(base.DigitalInputModule, dto.DigitalInputModule)
+	if err != nil {
+		return base, err
+	}
+	out.DigitalInputModule = digitalInputCfg
 
 	return out, nil
 }
@@ -492,6 +526,56 @@ func relayModuleFromDTO(base RelayModuleConfig, dto RelayModuleConfigDTO) (Relay
 	}
 
 	return RelayModuleConfig{
+		Chip:        strings.TrimSpace(dto.Chip),
+		LiveEnabled: dto.LiveEnabled,
+		Channels:    channels,
+	}, nil
+}
+
+// validDigitalInputPorts is the hardware-constrained set of gpiochip0
+// line numbers these digital inputs may be wired to - unlike the relay
+// outputs' free 0-15 range, only these lines are usable on this board.
+var validDigitalInputPorts = map[int]bool{2: true, 3: true, 5: true, 6: true, 7: true, 12: true, 13: true}
+
+// digitalInputModuleFromDTO validates and merges the digital input
+// module's DTO onto the existing config, mirroring relayModuleFromDTO's
+// shape - duplicate assignment/port checks, plus the allowed-line-number
+// restriction relay ports don't have.
+func digitalInputModuleFromDTO(base DigitalInputModuleConfig, dto DigitalInputModuleConfigDTO) (DigitalInputModuleConfig, error) {
+	if strings.TrimSpace(dto.Chip) == "" {
+		return base, fmt.Errorf("GPIO digital input chip path cannot be empty")
+	}
+	if len(dto.Channels) != DigitalInputChannelCount {
+		return base, fmt.Errorf("digital input module must have exactly %d channels", DigitalInputChannelCount)
+	}
+
+	seenSignal := map[DigitalInput]bool{}
+	seenPort := map[int]bool{}
+	var channels [DigitalInputChannelCount]DigitalInputChannelConfig
+	for i, chDto := range dto.Channels {
+		ch := DigitalInputChannelConfig{Enabled: chDto.Enabled, Port: chDto.Port}
+		if chDto.Enabled {
+			d, ok := ParseDigitalInput(chDto.Assigned)
+			if !ok {
+				return base, fmt.Errorf("digital input channel %d: %q is not a valid signal assignment", i, chDto.Assigned)
+			}
+			if seenSignal[d] {
+				return base, fmt.Errorf("digital input channel %d: %s is already assigned to another enabled channel", i, d.String())
+			}
+			seenSignal[d] = true
+			if !validDigitalInputPorts[chDto.Port] {
+				return base, fmt.Errorf("digital input channel %d: port %d is not one of the allowed lines (2,3,5,6,7,12,13)", i, chDto.Port)
+			}
+			if seenPort[chDto.Port] {
+				return base, fmt.Errorf("digital input channel %d: port %d is already used by another enabled channel", i, chDto.Port)
+			}
+			seenPort[chDto.Port] = true
+			ch.Assigned = d
+		}
+		channels[i] = ch
+	}
+
+	return DigitalInputModuleConfig{
 		Chip:        strings.TrimSpace(dto.Chip),
 		LiveEnabled: dto.LiveEnabled,
 		Channels:    channels,

@@ -52,12 +52,12 @@
     width: 100%; padding: 8px 10px; background: var(--panel2); border: 1px solid var(--border);
     border-radius: 6px; color: var(--text); font-size: 14px;
   }
-  #canChannelRows td, #tempChannelRows td, #relayChannelRows td { padding: 4px 4px; }
+  #canChannelRows td, #tempChannelRows td, #relayChannelRows td, #digitalInputRows td { padding: 4px 4px; }
   #canChannelRows input[type=number], #relayChannelRows input[type=number] { padding: 5px 6px; font-size: 13px; }
-  #canChannelRows input[type=checkbox], #tempChannelRows input[type=checkbox], #relayChannelRows input[type=checkbox] {
+  #canChannelRows input[type=checkbox], #tempChannelRows input[type=checkbox], #relayChannelRows input[type=checkbox], #digitalInputRows input[type=checkbox] {
     width: 16px; height: 16px; accent-color: var(--accent);
   }
-  #tempChannelRows select, #relayChannelRows select { padding: 5px 6px; font-size: 13px; }
+  #tempChannelRows select, #relayChannelRows select, #digitalInputRows select { padding: 5px 6px; font-size: 13px; }
   #relayChannelRows input[type=number] { width: 80px; }
   .reading-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
   .reading-row:last-child { border-bottom: none; }
@@ -343,6 +343,38 @@
     </table>
   </div>
 
+  <div class="card">
+    <h2 data-i18n="admin_digital_inputs_title">Digital Inputs (gpiochip0)</h2>
+    <p class="hint" data-i18n="admin_digital_inputs_hint">Each row maps a logical feedback signal to one line on the SoC's GPIO controller - a different chip than the relay outputs above. Only lines 2, 3, 5, 6, 7, 12 and 13 are wired out on this board.</p>
+    <div class="field" style="max-width:280px;">
+      <label data-i18n="admin_gpio_chip_device">GPIO chip device</label>
+      <input type="text" id="digitalChip" placeholder="/dev/gpiochip0">
+    </div>
+
+    <label style="display:flex; align-items:center; gap:10px; margin:16px 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="digitalLive" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_live_data_feed">Live data feed</strong> - <span data-i18n="admin_live_outputs_hint">hint</span></span>
+    </label>
+
+    <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:6px;">
+      <thead>
+        <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
+          <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
+          <th style="padding:6px 4px;" data-i18n="admin_assigned_to">Assigned to</th>
+          <th style="padding:6px 4px;" data-i18n="admin_port_gpio0">Line</th>
+        </tr>
+      </thead>
+      <tbody id="digitalInputRows"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_live_digital_readings">Live Digital Readings / Simulator</h2>
+    <p class="hint" id="digitalCommsStatus">&nbsp;</p>
+    <div id="digitalReadings"></div>
+  </div>
+
   <div class="actions">
     <button class="primary" onclick="apply(false)" data-i18n="admin_apply">Apply</button>
     <button class="primary" onclick="apply(true)" style="background:var(--good); color:#06210f;" data-i18n="admin_apply_save">Apply &amp; Save to File</button>
@@ -434,6 +466,8 @@ function valveOptions() {
     { value: 'Valve2A(dir)', label: 'Valve2A - ' + t('opt_stage2_direction') },
     { value: 'Valve2B(pulse)', label: 'Valve2B - ' + t('opt_stage2_pulse') },
     { value: 'VentValve', label: 'VentValve' },
+    { value: 'Pump1', label: 'Pump1 - ' + t('opt_pump1') },
+    { value: 'Pump2', label: 'Pump2 - ' + t('opt_pump2') },
   ];
 }
 
@@ -460,11 +494,62 @@ function buildRelayChannelRows(channels) {
 
 function readRelayChannelRows() {
   const rows = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     rows.push({
       enabled: document.getElementById(`relayCh${i}en`).checked,
       assigned: document.getElementById(`relayCh${i}assigned`).value,
       port: parseInt(document.getElementById(`relayCh${i}port`).value, 10),
+    });
+  }
+  return rows;
+}
+
+// The digital inputs are wired to a hardware-restricted set of
+// gpiochip0 lines (unlike the relay outputs' free 0-15 range) - a
+// dropdown restricted to exactly these values prevents picking an
+// unusable line rather than catching it only at Apply time.
+const DIGITAL_INPUT_PORTS = [2, 3, 5, 6, 7, 12, 13];
+
+function digitalInputOptions() {
+  return [
+    { value: '', label: t('opt_unused') },
+    { value: 'HydraulicOilLevel', label: 'HydraulicOilLevel - ' + t('opt_hydraulic_oil_level') },
+    { value: 'Motor1Powered', label: 'Motor1Powered - ' + t('opt_motor1_powered') },
+    { value: 'Motor2Powered', label: 'Motor2Powered - ' + t('opt_motor2_powered') },
+  ];
+}
+
+function buildDigitalInputRows(channels) {
+  const tbody = document.getElementById('digitalInputRows');
+  tbody.innerHTML = '';
+  channels.forEach((ch, i) => {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+
+    const options = digitalInputOptions().map(o =>
+      `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
+    ).join('');
+    const portOptions = DIGITAL_INPUT_PORTS.map(p =>
+      `<option value="${p}" ${p === ch.port ? 'selected' : ''}>${p}</option>`
+    ).join('');
+
+    tr.innerHTML = `
+      <td>${i}</td>
+      <td><input type="checkbox" id="digitalCh${i}en" ${ch.enabled ? 'checked' : ''}></td>
+      <td><select id="digitalCh${i}assigned">${options}</select></td>
+      <td><select id="digitalCh${i}port">${portOptions}</select></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function readDigitalInputRows() {
+  const rows = [];
+  for (let i = 0; i < 3; i++) {
+    rows.push({
+      enabled: document.getElementById(`digitalCh${i}en`).checked,
+      assigned: document.getElementById(`digitalCh${i}assigned`).value,
+      port: parseInt(document.getElementById(`digitalCh${i}port`).value, 10),
     });
   }
   return rows;
@@ -574,6 +659,10 @@ async function load() {
     setv('relayChip', c.relayModule.chip);
     document.getElementById('relayLive').checked = c.relayModule.liveEnabled;
     buildRelayChannelRows(c.relayModule.channels);
+
+    setv('digitalChip', c.digitalInputModule.chip);
+    document.getElementById('digitalLive').checked = c.digitalInputModule.liveEnabled;
+    buildDigitalInputRows(c.digitalInputModule.channels);
   } catch (e) {
     msg.textContent = t('admin_failed_load_config') + ' ' + e;
     msg.className = 'err';
@@ -589,10 +678,12 @@ function onLanguageChange(lang) {
   const canRows = readCanChannelRows();
   const tempRows = readTempChannelRows();
   const relayRows = readRelayChannelRows();
+  const digitalRows = readDigitalInputRows();
   setLanguage(lang);
   buildCanChannelRows(canRows);
   buildTempChannelRows(tempRows);
   buildRelayChannelRows(relayRows);
+  buildDigitalInputRows(digitalRows);
 }
 
 async function apply(persist) {
@@ -648,6 +739,11 @@ async function apply(persist) {
       liveEnabled: document.getElementById('relayLive').checked,
       channels: readRelayChannelRows(),
     },
+    digitalInputModule: {
+      chip: v('digitalChip'),
+      liveEnabled: document.getElementById('digitalLive').checked,
+      channels: readDigitalInputRows(),
+    },
   };
 
   try {
@@ -679,6 +775,7 @@ async function apply(persist) {
     }
     pollCanStatus();
     pollTempStatus();
+    pollDigitalStatus();
   } catch (e) {
     msg.textContent = t('admin_failed_apply') + ' ' + e;
     msg.className = 'err';
@@ -836,6 +933,71 @@ async function pollTempStatus() {
   }
 }
 
+// --- Digital input live readings / simulator panel -------------------
+// Mirrors pollTempStatus above; a checkbox stands in for the numeric
+// input since these are boolean levels, not a calibrated reading.
+
+let userIsEditingDigitalSim = false;
+
+function sendDigitalSimValue(signalName, high) {
+  clearTimeout(simDebounce['digital:' + signalName]);
+  simDebounce['digital:' + signalName] = setTimeout(async () => {
+    try {
+      await fetch('/api/digital/sim', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: { [signalName]: high } }),
+      });
+    } catch (e) { /* next poll will just show the last-accepted value */ }
+  }, 120);
+}
+
+async function pollDigitalStatus() {
+  try {
+    const res = await fetch('/api/digital/status');
+    const st = await res.json();
+
+    const commsEl = document.getElementById('digitalCommsStatus');
+    const mode = st.liveEnabled ? t('common_live') : t('common_simulation');
+    commsEl.innerHTML = st.liveEnabled
+      ? `${t('admin_mode')}: <strong>${mode}</strong>`
+      : `${t('admin_mode')}: <strong>${mode}</strong> &middot; ${t('admin_adjust_values_digital')}`;
+
+    const container = document.getElementById('digitalReadings');
+    if (userIsEditingDigitalSim) return;
+
+    const enabledChannels = st.channels.filter(c => c.enabled);
+    if (enabledChannels.length === 0) {
+      container.innerHTML = `<p class="hint">${t('admin_no_channels')}</p>`;
+      return;
+    }
+
+    container.innerHTML = enabledChannels.map(c => {
+      if (st.liveEnabled) {
+        const status = c.ok ? (c.high ? t('admin_level_high') : t('admin_level_low')) :
+          `<span class="comms-bad">${t('admin_fault_word')}</span>`;
+        return `<div class="reading-row">
+          <div class="ch-name">${c.assigned}</div>
+          <div class="ch-raw">${t('admin_gpio0_line')} ${c.port}</div>
+          <div class="ch-bar">${status}</div>
+        </div>`;
+      }
+      return `<div class="reading-row">
+        <div class="ch-name">${c.assigned}</div>
+        <div class="ch-raw">${t('admin_simulated')}</div>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" ${c.high ? 'checked' : ''}
+            onfocus="userIsEditingDigitalSim=true"
+            onblur="userIsEditingDigitalSim=false"
+            onchange="sendDigitalSimValue('${c.assigned}', this.checked)">
+          <span>${c.high ? t('admin_level_high') : t('admin_level_low')}</span>
+        </label>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('digitalCommsStatus').textContent = t('admin_failed_digital_status') + ' ' + e;
+  }
+}
+
 // --- Change admin password -------------------------------------------
 // Independent of the config Apply/Save flow above: its own endpoint,
 // takes effect immediately (no restart, and no need to also hit Apply).
@@ -984,6 +1146,8 @@ initI18n().then(() => {
   pollCanStatus();
   setInterval(pollTempStatus, 700);
   pollTempStatus();
+  setInterval(pollDigitalStatus, 700);
+  pollDigitalStatus();
 });
 </script>
 

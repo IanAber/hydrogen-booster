@@ -47,7 +47,7 @@ var apiDocs = []apiEndpointDoc{
 	{
 		Method: "GET", Path: "/api/diagnostics", Auth: authStaff,
 		Summary:  "Raw valve/sensor readings, bypassing job/phase state - for commissioning and wiring checks.",
-		Response: `{"valves":[{"name":"Valve1A(dir)","on":false,"ok":true}], "sensors":[{"name":"OutputTemp","kind":"temp","value":30.1,"ok":true}]}`,
+		Response: `{"valves":[{"name":"Valve1A(dir)","on":false,"ok":true}], "sensors":[{"name":"OutputTemp","kind":"temp","value":30.1,"ok":true}], "digitalInputs":[{"name":"HydraulicOilLevel","high":false,"ok":true}]}`,
 	},
 	{
 		Method: "POST", Path: "/api/clearfault", Auth: authStaff,
@@ -76,6 +76,15 @@ var apiDocs = []apiEndpointDoc{
 		Method: "POST", Path: "/api/temp/sim", Auth: authStaff,
 		Summary: "Set simulated temperature readings (only while the temperature module is in simulation mode).",
 		Request: `{"values":{"OutputTemp":30}}`,
+	},
+	{
+		Method: "GET", Path: "/api/digital/status", Auth: authStaff,
+		Summary: "Digital input channel status (assignment, live/sim mode, current level).",
+	},
+	{
+		Method: "POST", Path: "/api/digital/sim", Auth: authStaff,
+		Summary: "Set simulated digital input levels (only while the digital input module is in simulation mode).",
+		Request: `{"values":{"HydraulicOilLevel":false}}`,
 	},
 	{
 		Method: "POST", Path: "/api/admin/password", Auth: authStaff,

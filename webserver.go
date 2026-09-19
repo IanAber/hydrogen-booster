@@ -15,6 +15,7 @@ type WebServer struct {
 	live        *LiveConfig
 	pm          *PressureModule
 	tm          *TemperatureModule
+	dim         *DigitalInputModule
 	listenAddr  string
 	configPath  string
 	webDir      string
@@ -23,9 +24,9 @@ type WebServer struct {
 	validCodes  *ValidCodes
 }
 
-func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
+func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
 	return &WebServer{
-		ctrl: ctrl, live: live, pm: pm, tm: tm,
+		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim,
 		listenAddr: listenAddr, configPath: configPath, webDir: webDir,
 		auth: auth, dispenseLog: dispenseLog, validCodes: validCodes,
 	}
@@ -83,6 +84,8 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/api/can/sim", w.requireAuth(w.handleCanSim))
 	mux.HandleFunc("/api/temp/status", w.requireAuth(w.handleTempStatus))
 	mux.HandleFunc("/api/temp/sim", w.requireAuth(w.handleTempSim))
+	mux.HandleFunc("/api/digital/status", w.requireAuth(w.handleDigitalStatus))
+	mux.HandleFunc("/api/digital/sim", w.requireAuth(w.handleDigitalSim))
 	mux.HandleFunc("/api/admin/password", w.requireAuth(w.handleChangePassword))
 	mux.HandleFunc("/api/records", w.requireAuth(w.handleRecords))
 	mux.HandleFunc("/api/admin/codes", w.requireAuth(w.handleAdminCodes))
@@ -288,6 +291,44 @@ func (w *WebServer) handleTempSim(rw http.ResponseWriter, r *http.Request) {
 	}
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(w.tm.Status())
+}
+
+func (w *WebServer) handleDigitalStatus(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(w.dim.Status())
+}
+
+type digitalSimRequest struct {
+	// Values maps signal name (DigitalInput.String(), e.g. "Motor1Powered")
+	// to the level to set (true = high/1, false = low/0). Only applies
+	// while the digital input module is in simulation mode (live data
+	// off); see DigitalInputModule.SetSimValue.
+	Values map[string]bool `json:"values"`
+}
+
+func (w *WebServer) handleDigitalSim(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(rw, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req digitalSimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	for name, level := range req.Values {
+		d, ok := ParseDigitalInput(name)
+		if !ok {
+			http.Error(rw, fmt.Sprintf("unknown digital input %q", name), http.StatusBadRequest)
+			return
+		}
+		if err := w.dim.SetSimValue(d, level); err != nil {
+			http.Error(rw, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(w.dim.Status())
 }
 
 type changePasswordRequest struct {

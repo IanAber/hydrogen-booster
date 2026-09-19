@@ -16,6 +16,8 @@ const (
 	Valve2A                      // Stage 2 direction valve
 	Valve2B                      // Stage 2 secondary valve, pulsed ~500ms on direction change
 	VentValve                    // Bleeds the delivery hose after a 700 bar fill
+	Pump1                        // Stage 1 hydraulic pump motor - on for the whole fill
+	Pump2                        // Stage 2 hydraulic pump motor - on for the whole fill
 )
 
 func (r RelayOutput) String() string {
@@ -30,6 +32,10 @@ func (r RelayOutput) String() string {
 		return "Valve2B(pulse)"
 	case VentValve:
 		return "VentValve"
+	case Pump1:
+		return "Pump1"
+	case Pump2:
+		return "Pump2"
 	default:
 		return "unknown"
 	}
@@ -50,6 +56,10 @@ func ParseRelayOutput(s string) (RelayOutput, bool) {
 		return Valve2B, true
 	case "VentValve":
 		return VentValve, true
+	case "Pump1":
+		return Pump1, true
+	case "Pump2":
+		return Pump2, true
 	default:
 		return 0, false
 	}
@@ -140,6 +150,46 @@ func isTempSensor(s SensorInput) bool {
 	}
 }
 
+// DigitalInput enumerates every digital feedback signal on the skid,
+// read from the SoC's own GPIO controller (gpiochip0) rather than the
+// MCP23017 relay expander the RelayOutput lines use.
+type DigitalInput int
+
+const (
+	HydraulicOilLevel DigitalInput = iota // low/0 = sufficient oil; high/1 = low oil, emergency stop
+	Motor1Powered                         // should read low/0 whenever Pump1 is on
+	Motor2Powered                         // should read low/0 whenever Pump2 is on
+)
+
+func (d DigitalInput) String() string {
+	switch d {
+	case HydraulicOilLevel:
+		return "HydraulicOilLevel"
+	case Motor1Powered:
+		return "Motor1Powered"
+	case Motor2Powered:
+		return "Motor2Powered"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseDigitalInput is the inverse of DigitalInput.String(), used when
+// reading a signal name back out of the config file or an admin API
+// request (see DigitalInputChannelConfig).
+func ParseDigitalInput(s string) (DigitalInput, bool) {
+	switch s {
+	case "HydraulicOilLevel":
+		return HydraulicOilLevel, true
+	case "Motor1Powered":
+		return Motor1Powered, true
+	case "Motor2Powered":
+		return Motor2Powered, true
+	default:
+		return 0, false
+	}
+}
+
 // ValidLanguages are the web UI language codes the admin screen's
 // language selector offers, and the only values Config.Language may
 // take. The web UI (web/i18n.js) has a translation table for each of
@@ -158,6 +208,7 @@ type IO interface {
 	RelayState(r RelayOutput) (bool, error)
 	ReadPressureBar(s SensorInput) (float64, error)
 	ReadTempC(s SensorInput) (float64, error)
+	ReadDigitalInput(d DigitalInput) (bool, error)
 	Close() error
 }
 
@@ -183,10 +234,11 @@ type SimulatedIO struct {
 	relays  map[RelayOutput]bool
 	running bool // see RunnableIO; gates the physics below so it doesn't drift forever between jobs
 
-	hyd1P, hyd2P float64
-	outP         float64
-	tankP        float64
-	temps        map[SensorInput]float64
+	hyd1P, hyd2P  float64
+	outP          float64
+	tankP         float64
+	temps         map[SensorInput]float64
+	digitalInputs map[DigitalInput]bool
 
 	stop chan struct{}
 }
@@ -198,7 +250,12 @@ func NewSimulatedIO() *SimulatedIO {
 		outP:  5,
 		tankP: 200,
 		temps: map[SensorInput]float64{},
-		stop:  make(chan struct{}),
+		// All three default to false (0/low), the "good" reading for
+		// every one of them - sufficient oil, and (while a pump is
+		// commanded on) a confirmed-running motor - so a simulated run
+		// never faults unless an admin explicitly flips a sim value.
+		digitalInputs: map[DigitalInput]bool{},
+		stop:          make(chan struct{}),
 	}
 	go s.run()
 	return s
@@ -318,6 +375,12 @@ func (s *SimulatedIO) ReadTempC(sn SensorInput) (float64, error) {
 		return v, nil
 	}
 	return 20, nil
+}
+
+func (s *SimulatedIO) ReadDigitalInput(d DigitalInput) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.digitalInputs[d], nil
 }
 
 func (s *SimulatedIO) Close() error {
