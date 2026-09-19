@@ -207,11 +207,27 @@ func TestSuperviseSafetyFaultsOnMotorNotConfirmedRunning(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	// Pump1 commanded on (as Start() would), but Motor1Powered reads
-	// high instead of the expected low - the motor never confirmed
-	// running.
+	// Pump1 commanded on (as Start() would), but Motor1Powered reads high
+	// instead of the expected low (active-low feedback) - the motor
+	// never confirmed running.
 	_ = io.SetRelay(Pump1, true)
 	io.digitalInputs[Motor1Powered] = true
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got != PhaseFault {
+		t.Fatalf("phase = %v, want fault", got)
+	}
+}
+
+func TestSuperviseSafetyFaultsOnMotorNotConfirmedStoppedWhilePumpOff(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Pump1 never commanded on, but Motor1Powered reads low (instead of
+	// the expected high) - the motor never confirmed stopped.
+	io.digitalInputs[Motor1Powered] = false
 	c.superviseSafety()
 
 	if got := c.Status().Phase; got != PhaseFault {
@@ -232,6 +248,21 @@ func TestSuperviseSafetyNoFaultWhenMotorConfirmsRunning(t *testing.T) {
 
 	if got := c.Status().Phase; got == PhaseFault {
 		t.Fatalf("phase = fault, want idle (motor confirmed running); faults: %v", c.Status().Faults)
+	}
+}
+
+func TestSuperviseSafetyNoFaultWhenMotorConfirmsStoppedWhilePumpOff(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Pump1 never commanded on, Motor1Powered correctly reads high - no fault.
+	io.digitalInputs[Motor1Powered] = true
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got == PhaseFault {
+		t.Fatalf("phase = fault, want idle (motor confirmed stopped); faults: %v", c.Status().Faults)
 	}
 }
 

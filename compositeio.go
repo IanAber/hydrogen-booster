@@ -35,9 +35,23 @@ func (c *CompositeIO) SetRunning(running bool) {
 // of whether the real relay module is live for this valve - that keeps
 // SimulatedIO's own hydraulic-pressure physics (which reacts to
 // direction-valve changes) coherent for any pressure/temp sensor still
-// running in simulation, even while relays are already live.
+// running in simulation, even while relays are already live. It also
+// mirrors a pump command into the digital input module's own simulated
+// value for that pump's motor-powered feedback signal - active-low, so
+// the mirrored value is the command's inverse - (best-effort; ignored
+// if that module is live or the signal isn't assigned), so the admin
+// screen's digital input panel reflects a healthy pump/motor pair
+// without an operator having to touch it first - the same "healthy
+// simulated motor" default SimulatedIO.SetRelay provides when this
+// module is the one actually serving that signal.
 func (c *CompositeIO) SetRelay(r RelayOutput, on bool) error {
 	baseErr := c.base.SetRelay(r, on)
+	if r == Pump1 {
+		_ = c.dim.SetSimValue(Motor1Powered, !on)
+	}
+	if r == Pump2 {
+		_ = c.dim.SetSimValue(Motor2Powered, !on)
+	}
 	if handled, err := c.rm.SetRelay(r, on); handled {
 		return err
 	}

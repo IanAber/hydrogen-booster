@@ -250,11 +250,14 @@ func NewSimulatedIO() *SimulatedIO {
 		outP:  5,
 		tankP: 200,
 		temps: map[SensorInput]float64{},
-		// All three default to false (0/low), the "good" reading for
-		// every one of them - sufficient oil, and (while a pump is
-		// commanded on) a confirmed-running motor - so a simulated run
-		// never faults unless an admin explicitly flips a sim value.
-		digitalInputs: map[DigitalInput]bool{},
+		// HydraulicOilLevel defaults to false (0/low = sufficient oil).
+		// Motor1Powered/Motor2Powered start true (high = confirmed
+		// stopped, matching both pumps starting off) and are kept in
+		// sync with their pump's commanded state by SetRelay below (see
+		// there for the active-low polarity), so a simulated run never
+		// faults on its own; an admin can still override any of the
+		// three via the digital input module's simulated values.
+		digitalInputs: map[DigitalInput]bool{Motor1Powered: true, Motor2Powered: true},
 		stop:          make(chan struct{}),
 	}
 	go s.run()
@@ -339,6 +342,19 @@ func (s *SimulatedIO) SetRelay(r RelayOutput, on bool) error {
 	}
 	if r == Valve2A && wasOn != on {
 		s.hyd2P = 15
+	}
+	// Simulate a healthy motor: its powered-feedback input is active-low
+	// (low while running, high while stopped), so it tracks the inverse
+	// of the pump command instantly - a normal simulated run doesn't
+	// trip the pump/motor mismatch fault on its own. An admin can still
+	// override this via the digital input module's own simulated values
+	// (see DigitalInputModule.SetSimValue) to exercise the fault
+	// deliberately.
+	if r == Pump1 {
+		s.digitalInputs[Motor1Powered] = !on
+	}
+	if r == Pump2 {
+		s.digitalInputs[Motor2Powered] = !on
 	}
 	return nil
 }

@@ -178,6 +178,12 @@ func (c *Controller) superviseSafety() {
 		c.raiseFault("Hydraulic oil level low - emergency stop")
 	}
 
+	// Motor-powered feedback is active-low: it should read low while its
+	// pump is energised (confirming the motor is running) and high while
+	// de-energised (confirming it's stopped). A fault is when the relay
+	// and the input agree instead of mirroring each other - pump on with
+	// the input still high (motor never confirmed running), or pump off
+	// with the input still low (motor never confirmed stopped).
 	pumpsMotors := []struct {
 		pump  RelayOutput
 		motor DigitalInput
@@ -188,11 +194,15 @@ func (c *Controller) superviseSafety() {
 	}
 	for _, pm := range pumpsMotors {
 		pumpOn, err := c.io.RelayState(pm.pump)
-		if err != nil || !pumpOn {
+		if err != nil {
 			continue
 		}
-		if motorHigh, err := c.io.ReadDigitalInput(pm.motor); err == nil && motorHigh {
-			c.raiseFault(fmt.Sprintf("Pump %s powered but Motor %s not confirmed running - emergency stop", pm.label, pm.label))
+		motorHigh, err := c.io.ReadDigitalInput(pm.motor)
+		if err != nil {
+			continue
+		}
+		if pumpOn == motorHigh {
+			c.raiseFault(fmt.Sprintf("Pump %s / Motor %s feedback mismatch - emergency stop", pm.label, pm.label))
 		}
 	}
 }

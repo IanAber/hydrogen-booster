@@ -951,10 +951,53 @@ function sendDigitalSimValue(signalName, high) {
   }, 120);
 }
 
+// digitalStatusLabel gives each signal its own meaningful status text,
+// rather than a generic High/Low level:
+//  - HydraulicOilLevel: Low (red) when high/insufficient, OK (green)
+//    when low/sufficient - matches the safety check in superviseSafety.
+//  - Motor1Powered/Motor2Powered: compared against their pump's current
+//    relay state (pumpsOn, from /api/diagnostics) - active-low
+//    feedback, so Run (green) is pump on with input low, Stopped (no
+//    highlight) is pump off with input high, and Fault (red) is either
+//    case where they instead agree - matching the pump/motor feedback
+//    check in superviseSafety.
+// A read error, or a motor signal whose pump state couldn't be
+// determined, falls back to a plain High/Low reading. In sim mode
+// (live=false), c.ok only means "a sim value has been explicitly set" -
+// not a real fault - so it's ignored there, matching the CAN/temp sim
+// panels, which likewise show a value regardless of ok.
+function digitalStatusLabel(c, pumpsOn, live) {
+  if (live && !c.ok) return { text: t('admin_fault_word'), cls: 'comms-bad' };
+  if (c.assigned === 'HydraulicOilLevel') {
+    return c.high ? { text: t('admin_oil_low'), cls: 'comms-bad' } : { text: t('admin_oil_ok'), cls: 'comms-ok' };
+  }
+  const pumpName = c.assigned === 'Motor1Powered' ? 'Pump1' : c.assigned === 'Motor2Powered' ? 'Pump2' : null;
+  if (pumpName && pumpsOn && (pumpName in pumpsOn)) {
+    const pumpOn = pumpsOn[pumpName];
+    // Active-low feedback: pump on should read low (Run), pump off
+    // should read high (Stopped) - a fault is when they instead agree.
+    if (pumpOn !== c.high) {
+      return pumpOn ? { text: t('admin_motor_run'), cls: 'comms-ok' } : { text: t('admin_motor_stopped'), cls: '' };
+    }
+    return { text: t('admin_fault_word'), cls: 'comms-bad' };
+  }
+  return c.high ? { text: t('admin_level_high'), cls: '' } : { text: t('admin_level_low'), cls: '' };
+}
+
 async function pollDigitalStatus() {
   try {
     const res = await fetch('/api/digital/status');
     const st = await res.json();
+
+    let pumpsOn = null;
+    try {
+      const diagRes = await fetch('/api/diagnostics');
+      const diag = await diagRes.json();
+      pumpsOn = {};
+      (diag.valves || []).forEach(v => { pumpsOn[v.name] = v.on; });
+    } catch (e) {
+      pumpsOn = null; // motor rows fall back to a plain High/Low reading
+    }
 
     const commsEl = document.getElementById('digitalCommsStatus');
     const mode = st.liveEnabled ? t('common_live') : t('common_simulation');
@@ -972,13 +1015,13 @@ async function pollDigitalStatus() {
     }
 
     container.innerHTML = enabledChannels.map(c => {
+      const label = digitalStatusLabel(c, pumpsOn, st.liveEnabled);
+      const statusHtml = `<span class="${label.cls}">${label.text}</span>`;
       if (st.liveEnabled) {
-        const status = c.ok ? (c.high ? t('admin_level_high') : t('admin_level_low')) :
-          `<span class="comms-bad">${t('admin_fault_word')}</span>`;
         return `<div class="reading-row">
           <div class="ch-name">${c.assigned}</div>
           <div class="ch-raw">${t('admin_gpio0_line')} ${c.port}</div>
-          <div class="ch-bar">${status}</div>
+          <div class="ch-bar">${statusHtml}</div>
         </div>`;
       }
       return `<div class="reading-row">
@@ -989,7 +1032,7 @@ async function pollDigitalStatus() {
             onfocus="userIsEditingDigitalSim=true"
             onblur="userIsEditingDigitalSim=false"
             onchange="sendDigitalSimValue('${c.assigned}', this.checked)">
-          <span>${c.high ? t('admin_level_high') : t('admin_level_low')}</span>
+          ${statusHtml}
         </label>
       </div>`;
     }).join('');
