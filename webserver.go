@@ -86,6 +86,8 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/api/admin/password", w.requireAuth(w.handleChangePassword))
 	mux.HandleFunc("/api/records", w.requireAuth(w.handleRecords))
 	mux.HandleFunc("/api/admin/codes", w.requireAuth(w.handleAdminCodes))
+	mux.HandleFunc("/docs.html", w.requireAuth(w.serveStatic("docs.html")))
+	mux.HandleFunc("/api/docs", w.requireAuth(w.handleAPIDocs))
 
 	log.Printf("Web UI listening on %s", w.listenAddr)
 	return http.ListenAndServe(w.listenAddr, mux)

@@ -21,6 +21,7 @@
 const I18N = {
   en: {
     nav_diagnostics: "Diagnostics", nav_admin: "Admin / Config", nav_dashboard: "Dashboard",
+    nav_api_docs: "API Docs",
 
     idx_page_title: "Hydrogen Booster Control", idx_job_setup: "Job Setup", idx_nozzle: "Nozzle",
     idx_final_pressure: "Final pressure (bar)", idx_amount_hydrogen: "Amount of hydrogen (kg)",
@@ -113,6 +114,8 @@ const I18N = {
     admin_valve: "Valve", admin_port: "Port (0-15)",
     admin_apply: "Apply", admin_apply_save: "Apply & Save to File", admin_reload: "Reload from server",
     admin_config_file_in_use: "Config file in use:", admin_diagnostics_link: "Diagnostics",
+    admin_api_docs_link: "API Docs", docs_page_title: "API Documentation",
+    docs_page_hint: "Every HTTP endpoint this device serves. Endpoint names, request/response bodies and JSON field names below are not translated.",
 
     opt_unused: "(unused)", opt_none_selected: "(none selected)",
     opt_stage1_hydraulic: "Stage 1 hydraulic", opt_stage2_hydraulic: "Stage 2 hydraulic",
@@ -138,6 +141,7 @@ const I18N = {
 
   es: {
     nav_diagnostics: "Diagnóstico", nav_admin: "Admin / Config", nav_dashboard: "Panel",
+    nav_api_docs: "Documentación API",
 
     idx_page_title: "Control del Sobrealimentador de Hidrógeno", idx_job_setup: "Configuración del trabajo",
     idx_nozzle: "Boquilla", idx_final_pressure: "Presión final (bar)",
@@ -233,6 +237,8 @@ const I18N = {
     admin_valve: "Válvula", admin_port: "Puerto (0-15)",
     admin_apply: "Aplicar", admin_apply_save: "Aplicar y guardar en archivo", admin_reload: "Recargar desde el servidor",
     admin_config_file_in_use: "Archivo de configuración en uso:", admin_diagnostics_link: "Diagnóstico",
+    admin_api_docs_link: "Documentación API", docs_page_title: "Documentación de la API",
+    docs_page_hint: "Todos los endpoints HTTP que ofrece este dispositivo. Los nombres de endpoints, cuerpos de solicitud/respuesta y nombres de campos JSON no están traducidos.",
 
     opt_unused: "(sin usar)", opt_none_selected: "(ninguno seleccionado)",
     opt_stage1_hydraulic: "hidráulico Etapa 1", opt_stage2_hydraulic: "hidráulico Etapa 2",
@@ -258,6 +264,7 @@ const I18N = {
 
   fr: {
     nav_diagnostics: "Diagnostic", nav_admin: "Admin / Config", nav_dashboard: "Tableau de bord",
+    nav_api_docs: "Documentation API",
 
     idx_page_title: "Contrôle du Suralimentateur d'Hydrogène", idx_job_setup: "Configuration du travail",
     idx_nozzle: "Buse", idx_final_pressure: "Pression finale (bar)",
@@ -353,6 +360,8 @@ const I18N = {
     admin_valve: "Vanne", admin_port: "Port (0-15)",
     admin_apply: "Appliquer", admin_apply_save: "Appliquer et enregistrer dans le fichier", admin_reload: "Recharger depuis le serveur",
     admin_config_file_in_use: "Fichier de configuration utilisé :", admin_diagnostics_link: "Diagnostic",
+    admin_api_docs_link: "Documentation API", docs_page_title: "Documentation de l'API",
+    docs_page_hint: "Tous les points de terminaison HTTP fournis par cet appareil. Les noms de points de terminaison, corps de requête/réponse et noms de champs JSON ci-dessous ne sont pas traduits.",
 
     opt_unused: "(inutilisé)", opt_none_selected: "(aucun sélectionné)",
     opt_stage1_hydraulic: "hydraulique Étage 1", opt_stage2_hydraulic: "hydraulique Étage 2",
@@ -378,6 +387,7 @@ const I18N = {
 
   de: {
     nav_diagnostics: "Diagnose", nav_admin: "Admin / Konfig", nav_dashboard: "Übersicht",
+    nav_api_docs: "API-Dokumentation",
 
     idx_page_title: "Wasserstoff-Booster-Steuerung", idx_job_setup: "Auftragseinrichtung",
     idx_nozzle: "Düse", idx_final_pressure: "Enddruck (bar)",
@@ -471,6 +481,8 @@ const I18N = {
     admin_valve: "Ventil", admin_port: "Port (0-15)",
     admin_apply: "Anwenden", admin_apply_save: "Anwenden & in Datei speichern", admin_reload: "Vom Server neu laden",
     admin_config_file_in_use: "Verwendete Konfigurationsdatei:", admin_diagnostics_link: "Diagnose",
+    admin_api_docs_link: "API-Dokumentation", docs_page_title: "API-Dokumentation",
+    docs_page_hint: "Alle HTTP-Endpunkte dieses Geräts. Endpunktnamen, Anfrage-/Antworttexte und JSON-Feldnamen unten sind nicht übersetzt.",
 
     opt_unused: "(ungenutzt)", opt_none_selected: "(keines ausgewählt)",
     opt_stage1_hydraulic: "Hydraulik Stufe 1", opt_stage2_hydraulic: "Hydraulik Stufe 2",
@@ -496,6 +508,7 @@ const I18N = {
 
   pt: {
     nav_diagnostics: "Diagnóstico", nav_admin: "Admin / Config", nav_dashboard: "Painel",
+    nav_api_docs: "Documentação da API",
 
     idx_page_title: "Controlo do Sobrealimentador de Hidrogénio", idx_job_setup: "Configuração do trabalho",
     idx_nozzle: "Bocal", idx_final_pressure: "Pressão final (bar)",
@@ -591,6 +604,8 @@ const I18N = {
     admin_valve: "Válvula", admin_port: "Porta (0-15)",
     admin_apply: "Aplicar", admin_apply_save: "Aplicar e guardar no ficheiro", admin_reload: "Recarregar do servidor",
     admin_config_file_in_use: "Ficheiro de configuração em uso:", admin_diagnostics_link: "Diagnóstico",
+    admin_api_docs_link: "Documentação da API", docs_page_title: "Documentação da API",
+    docs_page_hint: "Todos os endpoints HTTP fornecidos por este dispositivo. Nomes de endpoints, corpos de pedido/resposta e nomes de campos JSON abaixo não são traduzidos.",
 
     opt_unused: "(não usado)", opt_none_selected: "(nenhum selecionado)",
     opt_stage1_hydraulic: "hidráulico Estágio 1", opt_stage2_hydraulic: "hidráulico Estágio 2",
