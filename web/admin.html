@@ -118,6 +118,10 @@
         <option value="pt">Português</option>
       </select>
     </div>
+    <label style="display:flex; align-items:center; gap:10px; margin:16px 0 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="massMeasurementEnabled" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_mass_measurement">Hydrogen mass measurement</strong> - <span data-i18n="admin_mass_measurement_hint">hint</span></span>
+    </label>
   </div>
 
   <div class="card">
@@ -245,6 +249,16 @@
       <p class="hint" data-i18n="admin_pressure_blank_hint">Ignore pressure readings for spike detection on both circuits for this long after any relay on either circuit switches; 0 = disabled.</p>
       <div class="field"><label><span data-i18n="admin_poll_period">Control loop poll period</span><span class="unit">ms</span></label>
         <input type="number" id="pollPeriod" min="10" step="10"></div>
+    </div>
+
+    <div class="card">
+      <h2 data-i18n="admin_cooling_ventilation">Cooling / Ventilation</h2>
+      <div class="field"><label><span data-i18n="admin_vent_fan_off_delay">Vent fan off delay</span><span class="unit">ms</span></label>
+        <input type="number" id="ventFanOffDelay" min="0" step="100"></div>
+      <p class="hint" data-i18n="admin_vent_fan_off_delay_hint">VentFan energises the instant either pump runs, and stays energised this long after both pumps stop.</p>
+      <div class="field"><label><span data-i18n="admin_cooling_fan_setpoint">Cooling fan setpoint</span><span class="unit">&deg;C</span></label>
+        <input type="number" id="coolingFanSetpoint" step="1"></div>
+      <p class="hint" data-i18n="admin_cooling_fan_setpoint_hint">CoolingFan turns on once hydraulic oil temperature exceeds this while the pumps are running, and stays on until it drops 1&deg;C below this - even after the pumps stop.</p>
     </div>
 
   </div>
@@ -475,6 +489,8 @@ function valveOptions() {
     { value: 'VentValve', label: 'VentValve' },
     { value: 'Pump1', label: 'Pump1 - ' + t('opt_pump1') },
     { value: 'Pump2', label: 'Pump2 - ' + t('opt_pump2') },
+    { value: 'VentFan', label: 'VentFan - ' + t('opt_vent_fan') },
+    { value: 'CoolingFan', label: 'CoolingFan - ' + t('opt_cooling_fan') },
   ];
 }
 
@@ -516,7 +532,8 @@ function buildRelayChannelRows(channels) {
 
 function readRelayChannelRows() {
   const rows = [];
-  for (let i = 0; i < 7; i++) {
+  const rowCount = document.querySelectorAll('#relayChannelRows tr').length;
+  for (let i = 0; i < rowCount; i++) {
     rows.push({
       enabled: document.getElementById(`relayCh${i}en`).checked,
       assigned: document.getElementById(`relayCh${i}assigned`).value,
@@ -647,6 +664,7 @@ async function load() {
       setv('languageSelect', c.language);
       setLanguage(c.language);
     }
+    document.getElementById('massMeasurementEnabled').checked = c.massMeasurementEnabled;
 
     document.getElementById('s1name').textContent = c.stage1.name;
     setv('s1min', c.stage1.minStrokeTimeMs);
@@ -674,6 +692,8 @@ async function load() {
     setv('tankT', c.tank.nominalTempC);
     setv('ventDur', c.vent.durationMs);
     setv('homingDur', c.homing.durationMs);
+    setv('ventFanOffDelay', c.ventFan.offDelayMs);
+    setv('coolingFanSetpoint', c.coolingFan.setpointC);
     setv('pressureBlank', c.pressureBlankTimeMs);
     setv('pollPeriod', c.pollPeriodMs);
 
@@ -734,6 +754,7 @@ async function apply(persist) {
   const body = {
     systemName: v('systemName'),
     language: v('languageSelect'),
+    massMeasurementEnabled: document.getElementById('massMeasurementEnabled').checked,
     pollPeriodMs: int('pollPeriod'),
     stage1: {
       name: document.getElementById('s1name').textContent,
@@ -748,6 +769,8 @@ async function apply(persist) {
       reverseDelayMs: int('s2pulse'), pressureFilterSamples: int('s2filter'),
     },
     homing: { durationMs: int('homingDur') },
+    ventFan: { offDelayMs: int('ventFanOffDelay') },
+    coolingFan: { setpointC: num('coolingFanSetpoint') },
     pressureBlankTimeMs: int('pressureBlank'),
     safety: {
       maxHydraulicPressureBar: num('maxHyd'),

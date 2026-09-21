@@ -117,8 +117,10 @@
         <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
         <input type="number" id="targetPressure" min="1" step="1" value="350">
 
-        <label for="targetMass" data-i18n="idx_amount_hydrogen">Amount of hydrogen (kg)</label>
-        <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0">
+        <div id="massAmountGroup">
+          <label for="targetMass" data-i18n="idx_amount_hydrogen">Amount of hydrogen (kg)</label>
+          <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0">
+        </div>
 
         <div class="actions">
           <button class="primary" id="startBtn" onclick="startJob()" data-i18n="idx_start">Start</button>
@@ -142,8 +144,10 @@
         <div class="stat-row"><span data-i18n="idx_output_pressure">Output pressure</span><span class="val" id="outP">-- bar</span></div>
         <div class="bar-track"><div class="bar-fill" id="pressBar" style="width:0%"></div></div>
         <div class="stat-row"><span data-i18n="idx_output_temperature">Output temperature</span><span class="val" id="outT">-- &deg;C</span></div>
-        <div class="stat-row"><span data-i18n="idx_delivered_mass">Delivered mass</span><span class="val" id="massVal">-- kg</span></div>
-        <div class="bar-track"><div class="bar-fill" id="massBar" style="width:0%"></div></div>
+        <div id="deliveredMassGroup">
+          <div class="stat-row"><span data-i18n="idx_delivered_mass">Delivered mass</span><span class="val" id="massVal">-- kg</span></div>
+          <div class="bar-track"><div class="bar-fill" id="massBar" style="width:0%"></div></div>
+        </div>
         <div class="stat-row"><span data-i18n="idx_vent_valve">Vent valve</span><span class="val" id="ventState">--</span></div>
         <div class="stat-row"><span data-i18n="idx_elapsed">Elapsed</span><span class="val" id="elapsedVal">--</span></div>
       </div>
@@ -179,6 +183,17 @@
 
 <script>
 let selectedNozzle = 350;
+let massMeasurementEnabled = false;
+
+// applyMassMeasurementVisibility hides mass/volume controls and
+// readouts when the skid has no real mass instrumentation (see
+// config.go's MassMeasurementEnabled doc comment) - Output pressure is
+// already shown separately here, so unlike index.html there's no gauge
+// to repurpose, just controls/readouts to hide.
+function applyMassMeasurementVisibility() {
+  document.getElementById('massAmountGroup').style.display = massMeasurementEnabled ? '' : 'none';
+  document.getElementById('deliveredMassGroup').style.display = massMeasurementEnabled ? '' : 'none';
+}
 
 function selectNozzle(n) {
   selectedNozzle = n;
@@ -191,7 +206,9 @@ async function startJob() {
   document.getElementById('errorMsg').textContent = '';
   const body = {
     targetPressureBar: parseFloat(document.getElementById('targetPressure').value),
-    targetMassKg: parseFloat(document.getElementById('targetMass').value),
+    // With mass measurement disabled, Amount is hidden - its stale DOM
+    // value must never be read; every fill is pressure-only.
+    targetMassKg: massMeasurementEnabled ? parseFloat(document.getElementById('targetMass').value) : 999,
     nozzle: selectedNozzle,
   };
   const res = await fetch('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -291,8 +308,10 @@ async function pollCanMode() {
   }
 }
 
-initI18n().then(() => {
+initI18n().then((config) => {
   document.title = t('idx_page_title');
+  massMeasurementEnabled = !!(config && config.massMeasurementEnabled);
+  applyMassMeasurementVisibility();
   setInterval(poll, 500);
   setInterval(pollCanMode, 1000);
   poll();

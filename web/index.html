@@ -115,7 +115,7 @@
   <div class="card gauge-card">
     <div class="gauge-status"><div id="phasePill" class="phase-pill">--</div></div>
     <div class="gauge" id="gauge"></div>
-    <div class="gauge-unit" data-i18n="cust_kg_dispensed">kg dispensed</div>
+    <div class="gauge-unit" id="gaugeUnitLabel" data-i18n="cust_kg_dispensed">kg dispensed</div>
   </div>
 
   <div class="card">
@@ -130,16 +130,18 @@
     <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
     <input type="number" id="targetPressure" min="1" step="1" value="350">
 
-    <label data-i18n="cust_amount">Amount (kg)</label>
-    <div class="preset-group">
-      <button onclick="selectPreset(0.5)" data-preset="0.5">0.5</button>
-      <button onclick="selectPreset(1)" data-preset="1">1</button>
-      <button onclick="selectPreset(2)" data-preset="2">2</button>
-      <button onclick="selectPreset(3)" data-preset="3">3</button>
-      <button onclick="selectPreset(4)" data-preset="4">4</button>
-      <button onclick="selectPreset(5)" data-preset="5">5</button>
+    <div id="massAmountGroup">
+      <label data-i18n="cust_amount">Amount (kg)</label>
+      <div class="preset-group">
+        <button onclick="selectPreset(0.5)" data-preset="0.5">0.5</button>
+        <button onclick="selectPreset(1)" data-preset="1">1</button>
+        <button onclick="selectPreset(2)" data-preset="2">2</button>
+        <button onclick="selectPreset(3)" data-preset="3">3</button>
+        <button onclick="selectPreset(4)" data-preset="4">4</button>
+        <button onclick="selectPreset(5)" data-preset="5">5</button>
+      </div>
+      <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0" oninput="onMassInput()">
     </div>
-    <input type="number" id="targetMass" min="0.01" step="0.01" value="1.0" oninput="onMassInput()">
 
     <div id="customerCodeGroup">
       <label for="customerCode" data-i18n="cust_code_label">Customer Code</label>
@@ -265,8 +267,12 @@ class RollingGauge {
   }
 }
 
-const gauge = new RollingGauge(document.getElementById('gauge'), 2, 3);
-let lastMass = 0;
+// The gauge and what feeds it depend on massMeasurementEnabled (from
+// the server's config), so both are set up once that's known - see
+// initI18n().then() below - rather than at top-level script load.
+let gauge;
+let massMeasurementEnabled = false;
+let lastGaugeValue = 0;
 
 // --- Job setup ---------------------------------------------------------
 
@@ -361,6 +367,17 @@ function codeValid() {
   return codeLookupValid;
 }
 
+// applyMassMeasurementVisibility hides every mass/volume control when
+// the skid has no real mass instrumentation (see config.go's
+// MassMeasurementEnabled doc comment) - leaving nozzle/pressure as the
+// only job-setup controls. "Fill to pressure" becomes redundant once
+// Amount is gone (Start already submits the same uncapped mass target
+// in that mode - see startJob() below), so it's hidden too.
+function applyMassMeasurementVisibility() {
+  document.getElementById('massAmountGroup').style.display = massMeasurementEnabled ? '' : 'none';
+  document.getElementById('fillPressureBtn').style.display = massMeasurementEnabled ? '' : 'none';
+}
+
 function updateButtonStates() {
   // On the transition back from running to idle, clear the code so the
   // next customer doesn't start from the previous one's value/lookup.
@@ -406,7 +423,10 @@ async function postStart(body) {
 async function startJob() {
   await postStart({
     targetPressureBar: parseFloat(document.getElementById('targetPressure').value),
-    targetMassKg: parseFloat(document.getElementById('targetMass').value),
+    // With mass measurement disabled, the Amount field is hidden - its
+    // stale DOM value must never be read; every fill is pressure-only,
+    // the same uncapped mass target fillToPressure() below always uses.
+    targetMassKg: massMeasurementEnabled ? parseFloat(document.getElementById('targetMass').value) : 999,
     nozzle: selectedNozzle,
     customerCode: document.getElementById('customerCode').value,
   });
@@ -453,10 +473,10 @@ async function poll() {
     document.getElementById('outP').textContent = fmt(s.outputPressureBar) + ' bar';
     document.getElementById('elapsedVal').textContent = s.startedAt ? fmt(s.elapsedSec, 0) + ' s' : '--';
 
-    const mass = s.deliveredMassKg || 0;
-    if (mass < lastMass - 0.001) gauge.reset();
-    lastMass = mass;
-    gauge.update(mass);
+    const gaugeValue = massMeasurementEnabled ? (s.deliveredMassKg || 0) : (s.outputPressureBar || 0);
+    if (gaugeValue < lastGaugeValue - 0.001) gauge.reset();
+    lastGaugeValue = gaugeValue;
+    gauge.update(gaugeValue);
 
     jobRunning = (s.phase === 'filling' || s.phase === 'venting');
     updateButtonStates();
@@ -465,8 +485,12 @@ async function poll() {
   }
 }
 
-initI18n().then(() => {
+initI18n().then((config) => {
   document.title = t('idx_page_title');
+  massMeasurementEnabled = !!(config && config.massMeasurementEnabled);
+  applyMassMeasurementVisibility();
+  gauge = new RollingGauge(document.getElementById('gauge'), massMeasurementEnabled ? 2 : 3, massMeasurementEnabled ? 3 : 1);
+  document.getElementById('gaugeUnitLabel').textContent = t(massMeasurementEnabled ? 'cust_kg_dispensed' : 'cust_output_pressure_gauge');
   setInterval(poll, 500);
   poll();
 });

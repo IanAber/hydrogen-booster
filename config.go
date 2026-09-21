@@ -144,7 +144,7 @@ type RelayChannelConfig struct {
 
 // RelayChannelCount matches the number of valves/pumps the system drives
 // (see allRelays in controller.go) - one MCP23017 port slot per output.
-const RelayChannelCount = 7
+const RelayChannelCount = 9
 
 // RelayModuleConfig configures the MCP23017 relay outputs, addressed via
 // the kernel gpiochip character device (e.g. /dev/gpiochip16).
@@ -199,6 +199,26 @@ type VentConfig struct {
 	Duration time.Duration // how long the vent valve stays open to bleed the 700 bar hose
 }
 
+// VentFanConfig controls the VentFan relay - an enclosure/area
+// ventilation fan, distinct from VentConfig above, which times the
+// hydrogen delivery hose bleed valve (VentValve). VentFan energises
+// immediately whenever either pump runs; OffDelay is how long it stays
+// energised after both pumps are confirmed off, before de-energising
+// (see Controller.tickFans).
+type VentFanConfig struct {
+	OffDelay time.Duration
+}
+
+// CoolingFanConfig controls the CoolingFan relay (the hydraulic oil
+// cooler fan) via temperature hysteresis: it turns on once HydOilTemp
+// exceeds SetpointC while the pumps are running, and - once on - stays
+// on until HydOilTemp drops to SetpointC-1, independent of pump state,
+// so residual heat keeps getting cooled after the pump that generated
+// it stops (see Controller.tickFans).
+type CoolingFanConfig struct {
+	SetpointC float64
+}
+
 type Config struct {
 	ListenAddr string
 	// SystemName is shown as the title in the banner at the top of
@@ -209,11 +229,25 @@ type Config struct {
 	// one of the codes in ValidLanguages (io.go). Editable from the
 	// admin screen; does not affect anything on the backend besides
 	// this one setting being served back to the pages.
-	Language   string
-	PollPeriod time.Duration
-	Stage1     StageConfig
-	Stage2     StageConfig
-	Homing     HomingConfig
+	Language string
+	// MassMeasurementEnabled selects whether the job-control screens
+	// show mass/volume controls and readouts at all - some skids have
+	// no real mass instrumentation (the delivered-mass figure is a tank
+	// pressure differential estimate, not a scale reading - see
+	// MassInVolumeKg in gas.go). When false (the default), every mass/
+	// volume field is hidden on the customer and operator screens, a
+	// job always fills to its target pressure only (see
+	// index.html/operator.html's startJob(), which submit a large
+	// placeholder TargetMassKg so Controller.superviseJob's "either
+	// target reached" completion is effectively pressure-only), and the
+	// customer screen's big gauge shows output pressure instead of
+	// delivered mass. Purely a display/behavior switch - no other
+	// backend logic depends on it.
+	MassMeasurementEnabled bool
+	PollPeriod             time.Duration
+	Stage1                 StageConfig
+	Stage2                 StageConfig
+	Homing                 HomingConfig
 	// PressureBlankTime is a global (not per-circuit) quiet period:
 	// spike detection ignores pressure samples on BOTH circuits for
 	// this long after any relay switches on either one - guards against
@@ -225,6 +259,8 @@ type Config struct {
 	Safety             SafetyConfig
 	Tank               TankConfig
 	Vent               VentConfig
+	VentFan            VentFanConfig
+	CoolingFan         CoolingFanConfig
 	CanModule          CanModuleConfig
 	TempModule         TempModuleConfig
 	RelayModule        RelayModuleConfig
@@ -237,10 +273,11 @@ type Config struct {
 // all machine-specific).
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr: ":8080",
-		SystemName: "Hydrogen Booster",
-		Language:   "en",
-		PollPeriod: 100 * time.Millisecond,
+		ListenAddr:             ":8080",
+		SystemName:             "Hydrogen Booster",
+		Language:               "en",
+		MassMeasurementEnabled: false,
+		PollPeriod:             100 * time.Millisecond,
 		Stage1: StageConfig{
 			Name: "Stage 1 (A/B)", DirRelay: Valve1A, ReliefRelay: Valve1B,
 			HydPressureSensor:     Hyd1Pressure,
@@ -269,8 +306,10 @@ func DefaultConfig() Config {
 			MaxTempC:                85,
 			SensorMaxAge:            2 * time.Second,
 		},
-		Tank: TankConfig{VolumeLitres: 300, NominalPressureBar: 200, NominalTempC: 15},
-		Vent: VentConfig{Duration: 5 * time.Second},
+		Tank:       TankConfig{VolumeLitres: 300, NominalPressureBar: 200, NominalTempC: 15},
+		Vent:       VentConfig{Duration: 5 * time.Second},
+		VentFan:    VentFanConfig{OffDelay: 10 * time.Second},
+		CoolingFan: CoolingFanConfig{SetpointC: 50},
 		// CAN pressure input module: 6 channels, protocol confirmed
 		// against the real hardware (101#020006 -> two 8-byte response
 		// frames on ID 0x001, each carrying 3 big-endian 16-bit raw
@@ -324,6 +363,8 @@ func DefaultConfig() Config {
 				{Enabled: true, Assigned: VentValve, Port: 4},
 				{Enabled: true, Assigned: Pump1, Port: 5},
 				{Enabled: true, Assigned: Pump2, Port: 6},
+				{Enabled: true, Assigned: VentFan, Port: 7},
+				{Enabled: true, Assigned: CoolingFan, Port: 8},
 			},
 		},
 		// Digital feedback inputs on the SoC's own GPIO controller

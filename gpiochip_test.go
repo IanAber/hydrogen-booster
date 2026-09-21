@@ -55,6 +55,8 @@ func TestRelayModuleOpenLinesUsesEnabledChannelsInOrder(t *testing.T) {
 	cfg.RelayModule.Channels[4] = RelayChannelConfig{Enabled: false}
 	cfg.RelayModule.Channels[5] = RelayChannelConfig{Enabled: false}
 	cfg.RelayModule.Channels[6] = RelayChannelConfig{Enabled: false}
+	cfg.RelayModule.Channels[7] = RelayChannelConfig{Enabled: false}
+	cfg.RelayModule.Channels[8] = RelayChannelConfig{Enabled: false}
 	live := NewLiveConfig(cfg)
 
 	fake := &fakeGpioLines{}

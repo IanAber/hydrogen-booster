@@ -11,13 +11,15 @@ import (
 type RelayOutput int
 
 const (
-	Valve1A   RelayOutput = iota // Stage 1 direction valve (energise = up stroke)
-	Valve1B                      // Stage 1 secondary valve, pulsed ~500ms on direction change
-	Valve2A                      // Stage 2 direction valve
-	Valve2B                      // Stage 2 secondary valve, pulsed ~500ms on direction change
-	VentValve                    // Bleeds the delivery hose after a 700 bar fill
-	Pump1                        // Stage 1 hydraulic pump motor - on for the whole fill
-	Pump2                        // Stage 2 hydraulic pump motor - on for the whole fill
+	Valve1A    RelayOutput = iota // Stage 1 direction valve (energise = up stroke)
+	Valve1B                       // Stage 1 secondary valve, pulsed ~500ms on direction change
+	Valve2A                       // Stage 2 direction valve
+	Valve2B                       // Stage 2 secondary valve, pulsed ~500ms on direction change
+	VentValve                     // Bleeds the delivery hose after a 700 bar fill
+	Pump1                         // Stage 1 hydraulic pump motor - on for the whole fill
+	Pump2                         // Stage 2 hydraulic pump motor - on for the whole fill
+	VentFan                       // Enclosure/area ventilation fan - on with either pump, off after a configurable delay once both stop
+	CoolingFan                    // Hydraulic oil cooler fan - on/off by temperature hysteresis (see CoolingFanConfig)
 )
 
 func (r RelayOutput) String() string {
@@ -36,6 +38,10 @@ func (r RelayOutput) String() string {
 		return "Pump1"
 	case Pump2:
 		return "Pump2"
+	case VentFan:
+		return "VentFan"
+	case CoolingFan:
+		return "CoolingFan"
 	default:
 		return "unknown"
 	}
@@ -60,6 +66,10 @@ func ParseRelayOutput(s string) (RelayOutput, bool) {
 		return Pump1, true
 	case "Pump2":
 		return Pump2, true
+	case "VentFan":
+		return VentFan, true
+	case "CoolingFan":
+		return CoolingFan, true
 	default:
 		return 0, false
 	}

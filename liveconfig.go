@@ -72,6 +72,14 @@ type VentConfigDTO struct {
 	DurationMs int `json:"durationMs"`
 }
 
+type VentFanConfigDTO struct {
+	OffDelayMs int `json:"offDelayMs"`
+}
+
+type CoolingFanConfigDTO struct {
+	SetpointC float64 `json:"setpointC"`
+}
+
 type HomingConfigDTO struct {
 	DurationMs int `json:"durationMs"`
 }
@@ -133,20 +141,23 @@ type DigitalInputModuleConfigDTO struct {
 }
 
 type ConfigDTO struct {
-	SystemName          string                      `json:"systemName"`
-	Language            string                      `json:"language"`
-	PollPeriodMs        int                         `json:"pollPeriodMs"`
-	Stage1              StageConfigDTO              `json:"stage1"`
-	Stage2              StageConfigDTO              `json:"stage2"`
-	Homing              HomingConfigDTO             `json:"homing"`
-	PressureBlankTimeMs int                         `json:"pressureBlankTimeMs"`
-	Safety              SafetyConfigDTO             `json:"safety"`
-	Tank                TankConfigDTO               `json:"tank"`
-	Vent                VentConfigDTO               `json:"vent"`
-	CanModule           CanModuleConfigDTO          `json:"canModule"`
-	TempModule          TempModuleConfigDTO         `json:"tempModule"`
-	RelayModule         RelayModuleConfigDTO        `json:"relayModule"`
-	DigitalInputModule  DigitalInputModuleConfigDTO `json:"digitalInputModule"`
+	SystemName             string                      `json:"systemName"`
+	Language               string                      `json:"language"`
+	MassMeasurementEnabled bool                        `json:"massMeasurementEnabled"`
+	PollPeriodMs           int                         `json:"pollPeriodMs"`
+	Stage1                 StageConfigDTO              `json:"stage1"`
+	Stage2                 StageConfigDTO              `json:"stage2"`
+	Homing                 HomingConfigDTO             `json:"homing"`
+	PressureBlankTimeMs    int                         `json:"pressureBlankTimeMs"`
+	Safety                 SafetyConfigDTO             `json:"safety"`
+	Tank                   TankConfigDTO               `json:"tank"`
+	Vent                   VentConfigDTO               `json:"vent"`
+	VentFan                VentFanConfigDTO            `json:"ventFan"`
+	CoolingFan             CoolingFanConfigDTO         `json:"coolingFan"`
+	CanModule              CanModuleConfigDTO          `json:"canModule"`
+	TempModule             TempModuleConfigDTO         `json:"tempModule"`
+	RelayModule            RelayModuleConfigDTO        `json:"relayModule"`
+	DigitalInputModule     DigitalInputModuleConfigDTO `json:"digitalInputModule"`
 }
 
 func stageToDTO(s StageConfig) StageConfigDTO {
@@ -247,13 +258,14 @@ func digitalInputModuleToDTO(c DigitalInputModuleConfig) DigitalInputModuleConfi
 // screen works with.
 func ToDTO(c Config) ConfigDTO {
 	return ConfigDTO{
-		SystemName:          c.SystemName,
-		Language:            c.Language,
-		PollPeriodMs:        int(c.PollPeriod / time.Millisecond),
-		Stage1:              stageToDTO(c.Stage1),
-		Stage2:              stageToDTO(c.Stage2),
-		Homing:              HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
-		PressureBlankTimeMs: int(c.PressureBlankTime / time.Millisecond),
+		SystemName:             c.SystemName,
+		Language:               c.Language,
+		MassMeasurementEnabled: c.MassMeasurementEnabled,
+		PollPeriodMs:           int(c.PollPeriod / time.Millisecond),
+		Stage1:                 stageToDTO(c.Stage1),
+		Stage2:                 stageToDTO(c.Stage2),
+		Homing:                 HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
+		PressureBlankTimeMs:    int(c.PressureBlankTime / time.Millisecond),
 		Safety: SafetyConfigDTO{
 			MaxHydraulicPressureBar: c.Safety.MaxHydraulicPressureBar,
 			MaxHydrogenPressureBar:  c.Safety.MaxHydrogenPressureBar,
@@ -266,6 +278,8 @@ func ToDTO(c Config) ConfigDTO {
 			NominalTempC:       c.Tank.NominalTempC,
 		},
 		Vent:               VentConfigDTO{DurationMs: int(c.Vent.Duration / time.Millisecond)},
+		VentFan:            VentFanConfigDTO{OffDelayMs: int(c.VentFan.OffDelay / time.Millisecond)},
+		CoolingFan:         CoolingFanConfigDTO{SetpointC: c.CoolingFan.SetpointC},
 		CanModule:          canModuleToDTO(c.CanModule),
 		TempModule:         tempModuleToDTO(c.TempModule),
 		RelayModule:        relayModuleToDTO(c.RelayModule),
@@ -332,6 +346,9 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	if dto.Vent.DurationMs < 0 {
 		return base, fmt.Errorf("vent duration cannot be negative")
 	}
+	if dto.VentFan.OffDelayMs < 0 {
+		return base, fmt.Errorf("vent fan off delay cannot be negative")
+	}
 	if dto.Homing.DurationMs < 0 {
 		return base, fmt.Errorf("homing duration cannot be negative")
 	}
@@ -353,6 +370,7 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 		}
 		out.Language = lang
 	}
+	out.MassMeasurementEnabled = dto.MassMeasurementEnabled
 	out.PollPeriod = time.Duration(dto.PollPeriodMs) * time.Millisecond
 	out.Stage1 = applyStage(base.Stage1, dto.Stage1)
 	out.Stage2 = applyStage(base.Stage2, dto.Stage2)
@@ -366,6 +384,8 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	out.Tank.NominalPressureBar = dto.Tank.NominalPressureBar
 	out.Tank.NominalTempC = dto.Tank.NominalTempC
 	out.Vent.Duration = time.Duration(dto.Vent.DurationMs) * time.Millisecond
+	out.VentFan.OffDelay = time.Duration(dto.VentFan.OffDelayMs) * time.Millisecond
+	out.CoolingFan.SetpointC = dto.CoolingFan.SetpointC
 
 	canCfg, err := canModuleFromDTO(base.CanModule, dto.CanModule)
 	if err != nil {

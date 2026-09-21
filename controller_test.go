@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestIsValidCustomerCode(t *testing.T) {
 	cases := []struct {
@@ -366,5 +369,131 @@ func TestAbortedJobIsNotRecorded(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Errorf("expected an operator-aborted job not to be recorded, got %v", records)
+	}
+}
+
+func TestTickFansVentFanEnergisesWithEitherPump(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should energise as soon as either pump is commanded on")
+	}
+}
+
+func TestTickFansVentFanStaysOnDuringOffDelayThenDeenergises(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.VentFan.OffDelay = 5 * time.Second
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	start := time.Now()
+	c.tickFans(start)
+
+	_ = io.SetRelay(Pump1, false)
+	c.tickFans(start.Add(1 * time.Second))
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should still be energised - within the configured off delay")
+	}
+
+	c.tickFans(start.Add(6 * time.Second))
+	if on, _ := io.RelayState(VentFan); on {
+		t.Fatal("VentFan should have de-energised once the off delay elapsed")
+	}
+}
+
+func TestTickFansCoolingFanStaysOffBelowSetpoint(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoolingFan.SetpointC = 50
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	io.temps[HydOilTemp] = 40
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(CoolingFan); on {
+		t.Fatal("CoolingFan should stay off while oil is below the setpoint")
+	}
+}
+
+func TestTickFansCoolingFanTurnsOnAboveSetpointWhilePumpsRun(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoolingFan.SetpointC = 50
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	io.temps[HydOilTemp] = 55
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should turn on once oil exceeds the setpoint while the pumps are running")
+	}
+}
+
+func TestTickFansCoolingFanDoesNotTurnOnAboveSetpointWhilePumpsOff(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoolingFan.SetpointC = 50
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Pumps never commanded on.
+	io.temps[HydOilTemp] = 55
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(CoolingFan); on {
+		t.Fatal("CoolingFan should not turn on from temperature alone while the pumps aren't running")
+	}
+}
+
+func TestTickFansCoolingFanStaysOnAfterPumpsStopUntilBelowHysteresis(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CoolingFan.SetpointC = 50
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	io.temps[HydOilTemp] = 55
+	c.tickFans(time.Now())
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should have turned on")
+	}
+
+	// Pumps stop, oil still above setpoint - fan should stay on.
+	_ = io.SetRelay(Pump1, false)
+	c.tickFans(time.Now())
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should stay on after the pumps stop while oil is still above setpoint")
+	}
+
+	// Oil drops to just below the setpoint, but not below setpoint-1 - still on.
+	io.temps[HydOilTemp] = 49.5
+	c.tickFans(time.Now())
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should stay on until oil drops below setpoint-1, not merely below setpoint")
+	}
+
+	// Oil drops below setpoint-1 - now it should turn off.
+	io.temps[HydOilTemp] = 48.9
+	c.tickFans(time.Now())
+	if on, _ := io.RelayState(CoolingFan); on {
+		t.Fatal("CoolingFan should turn off once oil drops below setpoint-1")
 	}
 }

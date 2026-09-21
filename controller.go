@@ -79,6 +79,14 @@ type Controller struct {
 	// real hardware too) even though no gas is moving anymore.
 	finalDeliveredMassKg float64
 
+	// pumpsOffSince/coolingFanOn are tickFans' own persistent state -
+	// zero pumpsOffSince means the pumps are currently on (or have never
+	// been observed off); coolingFanOn is the fan's last commanded
+	// state, needed because its own off-transition depends on that
+	// history, not just the instantaneous temperature reading.
+	pumpsOffSince time.Time
+	coolingFanOn  bool
+
 	// dispenseLog and validCodes are optional (nil-safe) - set via
 	// SetDispenseLog/SetValidCodes if the caller wants completed fills
 	// recorded and customer codes checked against an allow-list. Kept
@@ -130,6 +138,7 @@ func (c *Controller) Run() {
 	for now := range t.C {
 		c.stages.Tick(now)
 		c.superviseSafety()
+		c.tickFans(now)
 		c.superviseJob()
 
 		if newPeriod := c.live.Snapshot().PollPeriod; newPeriod != period && newPeriod > 0 {
@@ -192,6 +201,59 @@ func (c *Controller) superviseSafety() {
 		if pumpOn == motorHigh {
 			c.raiseFault(fmt.Sprintf("Pump %s / Motor %s feedback mismatch - emergency stop", pm.label, pm.label))
 		}
+	}
+}
+
+// tickFans drives the two auxiliary relay outputs that aren't part of
+// the hydraulic stage machine or the fill-job phase machine - they run
+// continuously off live pump/temperature readings regardless of job
+// phase, so an emergency stop or fault deliberately does not force
+// them off (see raiseFault/Stop): VentFan keeps purging the enclosure
+// and CoolingFan keeps cooling the oil for as long as either is
+// actually warranted.
+//
+//   - VentFan energises the instant either pump is commanded on, and
+//     de-energises VentFan.OffDelay after both are confirmed off.
+//   - CoolingFan's turn-on requires both "oil above setpoint" AND
+//     "pumps running"; once on, it stays on by temperature alone
+//     (independent of pump state) until the oil drops to setpoint-1,
+//     so residual heat keeps getting cooled after the pump that
+//     generated it stops.
+func (c *Controller) tickFans(now time.Time) {
+	p1, _ := c.io.RelayState(Pump1)
+	p2, _ := c.io.RelayState(Pump2)
+	anyPumpOn := p1 || p2
+
+	if anyPumpOn {
+		c.mu.Lock()
+		c.pumpsOffSince = time.Time{}
+		c.mu.Unlock()
+		_ = c.io.SetRelay(VentFan, true)
+	} else {
+		c.mu.Lock()
+		if c.pumpsOffSince.IsZero() {
+			c.pumpsOffSince = now
+		}
+		elapsed := now.Sub(c.pumpsOffSince)
+		c.mu.Unlock()
+		if elapsed >= c.live.Snapshot().VentFan.OffDelay {
+			_ = c.io.SetRelay(VentFan, false)
+		}
+	}
+
+	if oilT, err := c.io.ReadTempC(HydOilTemp); err == nil {
+		setpoint := c.live.Snapshot().CoolingFan.SetpointC
+		c.mu.Lock()
+		on := c.coolingFanOn
+		switch {
+		case !on && anyPumpOn && oilT > setpoint:
+			on = true
+		case on && oilT < setpoint-1:
+			on = false
+		}
+		c.coolingFanOn = on
+		c.mu.Unlock()
+		_ = c.io.SetRelay(CoolingFan, on)
 	}
 }
 
@@ -416,7 +478,7 @@ func (c *Controller) superviseJob() {
 // allRelays/allPressureSensors/allTempSensors/allDigitalInputs enumerate
 // every physical point on the skid, for the diagnostics page -
 // independent of which ones a running job currently cares about.
-var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve, Pump1, Pump2}
+var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve, Pump1, Pump2, VentFan, CoolingFan}
 var allPressureSensors = []SensorInput{Hyd1Pressure, Hyd2Pressure, TankPressure, InterStagePressure, OutputPressure}
 var allTempSensors = []SensorInput{HydOilTemp, OutputTemp}
 var allDigitalInputs = []DigitalInput{HydraulicOilLevel, Motor1Powered, Motor2Powered}

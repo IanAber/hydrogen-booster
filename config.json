@@ -1,4 +1,5 @@
 {
+  "massMeasurementEnabled": false,
   "pollPeriodMs": 100,
   "stage1": {
     "name": "Stage 1 (A/B)",
@@ -36,6 +37,12 @@
   "vent": {
     "durationMs": 5000
   },
+  "ventFan": {
+    "offDelayMs": 10000
+  },
+  "coolingFan": {
+    "setpointC": 50
+  },
   "canModule": {
     "interface": "can0",
     "requestId": "0x101",
@@ -71,7 +78,9 @@
       {"enabled": true, "assigned": "Valve2B(pulse)", "port": 3},
       {"enabled": true, "assigned": "VentValve", "port": 4},
       {"enabled": true, "assigned": "Pump1", "port": 5},
-      {"enabled": true, "assigned": "Pump2", "port": 6}
+      {"enabled": true, "assigned": "Pump2", "port": 6},
+      {"enabled": true, "assigned": "VentFan", "port": 7},
+      {"enabled": true, "assigned": "CoolingFan", "port": 8}
     ]
   },
   "digitalInputModule": {
