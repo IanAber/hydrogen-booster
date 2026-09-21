@@ -134,6 +134,29 @@ func (w *WebServer) requireAuthUnlessLocal(next http.HandlerFunc) http.HandlerFu
 	}
 }
 
+// requireAuthUnlessLocalRead is requireAuthUnlessLocal's counterpart for
+// a handler that serves both a public read and a staff-only write on
+// the same route (currently just GET/POST /api/config): a GET from
+// localhost is treated the same as requireAuthUnlessLocal (open to the
+// on-site kiosk - the customer screen's initI18n() reads system
+// name/language/mass-measurement/flow-sensor settings this way on every
+// page load), but every POST - local or not - still requires the
+// admin credentials, since that's what actually changes safety limits
+// and other operational settings. Without this split, the customer
+// kiosk's local, read-only /api/config fetch would trigger the
+// browser's native Basic Auth prompt on every page load even though
+// nothing on that screen needs the admin login.
+func (w *WebServer) requireAuthUnlessLocalRead(next http.HandlerFunc) http.HandlerFunc {
+	authed := w.requireAuth(next)
+	return func(rw http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && isLocalRequest(r) {
+			next(rw, r)
+			return
+		}
+		authed(rw, r)
+	}
+}
+
 func isLocalRequest(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

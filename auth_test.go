@@ -195,6 +195,74 @@ func TestRequireAuthUnlessLocalRequiresCredentialsRemotely(t *testing.T) {
 	}
 }
 
+func TestRequireAuthUnlessLocalReadAllowsLocalGetWithoutCredentials(t *testing.T) {
+	w := newTestWebServer(t, "correct-horse")
+	called := false
+	h := w.requireAuthUnlessLocalRead(func(rw http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	req.RemoteAddr = "127.0.0.1:55555"
+	rw := httptest.NewRecorder()
+	h(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Errorf("local GET: status = %d, want 200", rw.Code)
+	}
+	if !called {
+		t.Error("handler should run for a local GET without credentials")
+	}
+}
+
+func TestRequireAuthUnlessLocalReadRequiresCredentialsForRemoteGet(t *testing.T) {
+	w := newTestWebServer(t, "correct-horse")
+	called := false
+	h := w.requireAuthUnlessLocalRead(func(rw http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest("GET", "/api/config", nil)
+	req.RemoteAddr = "192.168.1.77:55555"
+	rw := httptest.NewRecorder()
+	h(rw, req)
+	if rw.Code != http.StatusUnauthorized {
+		t.Errorf("remote GET without creds: status = %d, want 401", rw.Code)
+	}
+	if called {
+		t.Error("handler should not run for a remote GET without credentials")
+	}
+}
+
+// TestRequireAuthUnlessLocalReadRequiresCredentialsForLocalPost is the
+// crux of why this middleware exists as its own thing, distinct from
+// requireAuthUnlessLocal: a POST must always require the admin login,
+// even from the kiosk itself - it changes safety limits and other
+// operational settings, unlike a GET, which only reads them.
+func TestRequireAuthUnlessLocalReadRequiresCredentialsForLocalPost(t *testing.T) {
+	w := newTestWebServer(t, "correct-horse")
+	called := false
+	h := w.requireAuthUnlessLocalRead(func(rw http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest("POST", "/api/config", nil)
+	req.RemoteAddr = "127.0.0.1:55555"
+	rw := httptest.NewRecorder()
+	h(rw, req)
+	if rw.Code != http.StatusUnauthorized {
+		t.Errorf("local POST without creds: status = %d, want 401", rw.Code)
+	}
+	if called {
+		t.Error("handler should not run for a local POST without credentials")
+	}
+
+	req = httptest.NewRequest("POST", "/api/config", nil)
+	req.RemoteAddr = "127.0.0.1:55555"
+	req.SetBasicAuth(AdminUsername, "correct-horse")
+	rw = httptest.NewRecorder()
+	h(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Errorf("local POST with creds: status = %d, want 200", rw.Code)
+	}
+	if !called {
+		t.Error("handler should run for a local POST once credentials are supplied")
+	}
+}
+
 func TestHandleChangePasswordRequiresCorrectCurrentPassword(t *testing.T) {
 	w := newTestWebServer(t, "correct-horse")
 

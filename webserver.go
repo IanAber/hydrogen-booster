@@ -46,7 +46,7 @@ func (w *WebServer) serveStatic(name string) http.HandlerFunc {
 	}
 }
 
-// ListenAndServe wires up routes in two access tiers:
+// ListenAndServe wires up routes in three access tiers:
 //
 //   - Public-from-anywhere: the customer screen (index.html) and the
 //     job-control API it needs (status/start/stop), plus shared static
@@ -56,10 +56,17 @@ func (w *WebServer) serveStatic(name string) http.HandlerFunc {
 //     customer screen's API when reached over the network rather than
 //     from the on-site kiosk. This is requireAuthUnlessLocal on "/" and
 //     the job-control endpoints - see auth.go.
+//   - Read-public-from-localhost-only, write always staff-only:
+//     GET /api/config - the customer screen's initI18n() reads system
+//     name/language/mass-measurement/flow-sensor settings from it on
+//     every page load, so it needs the same local exception as the
+//     tier above, but POSTing a new config must always require the
+//     admin login even from the kiosk itself. See
+//     requireAuthUnlessLocalRead in auth.go.
 //   - Staff-only, always auth required regardless of origin: the
-//     operator/admin/diagnostics pages and every API endpoint that lets
-//     you reconfigure the system, read raw diagnostics, or adjust
-//     simulated sensor values.
+//     operator/admin/diagnostics pages and every other API endpoint
+//     that lets you reconfigure the system, read raw diagnostics, or
+//     adjust simulated sensor values.
 func (w *WebServer) ListenAndServe() error {
 	if _, err := os.Stat(w.webDir); err != nil {
 		return fmt.Errorf("web assets directory %s: %w", w.webDir, err)
@@ -84,7 +91,7 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/history.html", w.requireAuth(w.serveStatic("history.html")))
 	mux.HandleFunc("/api/diagnostics", w.requireAuth(w.handleDiagnostics))
 	mux.HandleFunc("/api/clearfault", w.requireAuth(w.handleClearFault))
-	mux.HandleFunc("/api/config", w.requireAuth(w.handleConfig))
+	mux.HandleFunc("/api/config", w.requireAuthUnlessLocalRead(w.handleConfig))
 	mux.HandleFunc("/api/can/status", w.requireAuth(w.handleCanStatus))
 	mux.HandleFunc("/api/can/sim", w.requireAuth(w.handleCanSim))
 	mux.HandleFunc("/api/temp/status", w.requireAuth(w.handleTempStatus))
