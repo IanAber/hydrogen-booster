@@ -363,8 +363,11 @@ async function lookupCode(code) {
 let jobRunning = false;
 let wasJobRunning = false;
 
+// Without real mass instrumentation there's nothing to record a
+// customer code against (see MassMeasurementEnabled's doc comment in
+// config.go) - Start doesn't wait on a code lookup in that mode.
 function codeValid() {
-  return codeLookupValid;
+  return !massMeasurementEnabled || codeLookupValid;
 }
 
 // applyMassMeasurementVisibility hides every mass/volume control when
@@ -407,8 +410,10 @@ function updateButtonStates() {
   // Once a fill starts, the code has already done its job (identifying
   // who it's for) - hide the whole field rather than leave it sitting on
   // screen (in plain text, if it was showing) for the fill duration.
+  // Also hidden entirely whenever mass measurement is disabled - with
+  // nothing to record a code against, there's nothing to ask for.
   if (jobRunning && codeShowing) toggleCodeVisibility();
-  document.getElementById('customerCodeGroup').style.display = jobRunning ? 'none' : '';
+  document.getElementById('customerCodeGroup').style.display = (jobRunning || !massMeasurementEnabled) ? 'none' : '';
 }
 updateButtonStates();
 
@@ -428,7 +433,10 @@ async function startJob() {
     // the same uncapped mass target fillToPressure() below always uses.
     targetMassKg: massMeasurementEnabled ? parseFloat(document.getElementById('targetMass').value) : 999,
     nozzle: selectedNozzle,
-    customerCode: document.getElementById('customerCode').value,
+    // With mass measurement disabled, the code field is hidden and
+    // nothing needs a code to record against - never read its stale
+    // DOM value.
+    customerCode: massMeasurementEnabled ? document.getElementById('customerCode').value : '',
   });
 }
 
@@ -441,7 +449,7 @@ async function fillToPressure() {
     targetPressureBar: selectedNozzle,
     targetMassKg: 999,
     nozzle: selectedNozzle,
-    customerCode: document.getElementById('customerCode').value,
+    customerCode: massMeasurementEnabled ? document.getElementById('customerCode').value : '',
   });
 }
 

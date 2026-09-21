@@ -315,7 +315,9 @@ func TestStartAllowsEmptyCodeEvenWithAllowListConfigured(t *testing.T) {
 }
 
 func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
-	live := NewLiveConfig(DefaultConfig())
+	cfg := DefaultConfig()
+	cfg.MassMeasurementEnabled = true
+	live := NewLiveConfig(cfg)
 	io := NewSimulatedIO()
 	defer io.Close()
 	c := NewController(live, io)
@@ -346,6 +348,40 @@ func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
 	}
 	if records[0].DeliveredMassKg <= 0 {
 		t.Errorf("DeliveredMassKg = %v, want > 0", records[0].DeliveredMassKg)
+	}
+}
+
+// TestCompletedJobIsNotRecordedWhenMassMeasurementDisabled confirms
+// the default (MassMeasurementEnabled: false, per DefaultConfig)
+// never writes an estimated delivered-mass figure to the dispense log
+// - it's a tank pressure differential estimate, not a scale reading,
+// and shouldn't be handed to a billing/accounting system as fact.
+func TestCompletedJobIsNotRecordedWhenMassMeasurementDisabled(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig()) // MassMeasurementEnabled: false
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	d := NewDispenseLog(t.TempDir() + "/dispense-log.jsonl")
+	c.SetDispenseLog(d)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 6, TargetMassKg: 999, Nozzle: Nozzle350}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 60; i++ {
+		io.step()
+	}
+	c.superviseJob()
+	if got := c.Status().Phase; got != PhaseComplete {
+		t.Fatalf("phase = %v, want complete", got)
+	}
+
+	records, err := d.DrainAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("got %d records, want 0 (mass measurement disabled)", len(records))
 	}
 }
 

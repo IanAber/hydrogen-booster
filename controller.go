@@ -444,7 +444,11 @@ func (c *Controller) superviseJob() {
 	c.finalDeliveredMassKg = mass
 	c.mu.Unlock()
 
-	if c.dispenseLog != nil {
+	// Without real mass instrumentation, DeliveredMassKg is a tank
+	// pressure differential estimate, not a scale reading (see
+	// MassInVolumeKg in gas.go) - not something to hand to a billing/
+	// accounting system as fact, so skip recording it entirely.
+	if c.dispenseLog != nil && c.live.Snapshot().MassMeasurementEnabled {
 		if err := c.dispenseLog.Record(DispenseRecord{
 			Timestamp: time.Now(), CustomerCode: job.CustomerCode, DeliveredMassKg: mass,
 		}); err != nil {
