@@ -187,6 +187,44 @@ type DigitalInputModuleConfig struct {
 	Channels    [DigitalInputChannelCount]DigitalInputChannelConfig
 }
 
+// FlowSensorType selects which (if any) real mass flow sensor driver
+// FlowModule uses - "none" is a first-class choice, not just an unset
+// value, so it's unambiguous that no real flow instrumentation is
+// present and Controller.deliveredMassKg falls back to the tank
+// pressure-differential estimate (see gas.go).
+type FlowSensorType string
+
+const (
+	FlowSensorNone       FlowSensorType = "none"
+	FlowSensorAalborgXFM FlowSensorType = "aalborg_xfm"
+)
+
+// ValidFlowSensorTypes is every value FlowModuleConfig.SensorType may
+// take - checked in liveconfig.go's FromDTO, mirroring ValidLanguages'
+// validation style (io.go).
+var ValidFlowSensorTypes = map[FlowSensorType]bool{
+	FlowSensorNone:       true,
+	FlowSensorAalborgXFM: true,
+}
+
+// FlowModuleConfig configures the optional real mass flow sensor - see
+// FlowModule in flowmodule.go. The module only connects/polls when
+// BOTH Config.MassMeasurementEnabled is true AND SensorType names an
+// actual driver; there is deliberately no separate LiveEnabled toggle
+// the way the other modules have one - SensorType itself is the
+// "which hardware, if any" switch, so picking FlowSensorNone is
+// unambiguously "no flow sensor" with no simulated/fallback state to
+// reason about alongside it.
+type FlowModuleConfig struct {
+	SensorType FlowSensorType
+	Port       string // serial device path, e.g. "/dev/ttyUSB0" - Aalborg XFM only
+	BaudRate   int    // 9600 per the Aalborg XFM manual
+	UseRS485   bool   // false = RS-232 framing (no address prefix); true = RS-485 multidrop framing
+	Address    int    // RS-485 device address (0-255, sent as 2 ASCII hex chars); ignored for RS-232
+	Unit       string // e.g. "kg/min" - sent once per (re)connect; the totalizer itself is always a plain mass regardless of the "/min" rate suffix
+	PollPeriod time.Duration
+}
+
 // TankConfig describes the low-pressure storage bank feeding cylinder A,
 // used only for the delivered-mass estimate (see gas.go).
 type TankConfig struct {
@@ -255,16 +293,31 @@ type Config struct {
 	// circuit's reading) that a per-circuit debounce like
 	// StageConfig.MinStrokeTime can't catch, since it isn't anchored to
 	// this circuit's own phase timing. 0 (the default) disables it.
-	PressureBlankTime  time.Duration
-	Safety             SafetyConfig
-	Tank               TankConfig
-	Vent               VentConfig
-	VentFan            VentFanConfig
-	CoolingFan         CoolingFanConfig
-	CanModule          CanModuleConfig
-	TempModule         TempModuleConfig
-	RelayModule        RelayModuleConfig
-	DigitalInputModule DigitalInputModuleConfig
+	PressureBlankTime time.Duration
+	// OutputPressureFilterSamples is a median filter window (in samples)
+	// run over the hydrogen output pressure reading (OutputPressure)
+	// before it's used for job-completion ("target pressure reached")
+	// detection and display (Status/the customer gauge) - rejects brief
+	// spikes/dips caused by the delivery line's non-return (check) valve
+	// opening and closing, the same technique (and the same median()
+	// helper) StageConfig.PressureFilterSamples already uses for the
+	// hydraulic pressure signals. 1 (the default) disables filtering
+	// entirely. Deliberately NOT applied to the MaxHydrogenPressureBar
+	// safety check in superviseSafety - that reads the raw sensor value,
+	// unaffected by this setting, so a filtering misconfiguration can
+	// never mask a genuine overpressure condition (same principle as
+	// MaxStrokeTime's independence from the hydraulic pressure filters).
+	OutputPressureFilterSamples int
+	Safety                      SafetyConfig
+	Tank                        TankConfig
+	Vent                        VentConfig
+	VentFan                     VentFanConfig
+	CoolingFan                  CoolingFanConfig
+	CanModule                   CanModuleConfig
+	TempModule                  TempModuleConfig
+	RelayModule                 RelayModuleConfig
+	DigitalInputModule          DigitalInputModuleConfig
+	FlowModule                  FlowModuleConfig
 }
 
 // DefaultConfig gives sane starting values for commissioning against the
@@ -298,8 +351,9 @@ func DefaultConfig() Config {
 			ReverseDelay:          500 * time.Millisecond,
 			PressureFilterSamples: 1,
 		},
-		Homing:            HomingConfig{Duration: 8 * time.Second},
-		PressureBlankTime: 0,
+		Homing:                      HomingConfig{Duration: 8 * time.Second},
+		PressureBlankTime:           0,
+		OutputPressureFilterSamples: 1,
 		Safety: SafetyConfig{
 			MaxHydraulicPressureBar: 250,
 			MaxHydrogenPressureBar:  750,
@@ -380,6 +434,18 @@ func DefaultConfig() Config {
 				{Enabled: true, Assigned: Motor1Powered, Port: 3},
 				{Enabled: true, Assigned: Motor2Powered, Port: 5},
 			},
+		},
+		// No flow sensor by default - confirm RS-232 vs RS-485 wiring,
+		// device address and port against the physical meter before
+		// selecting Aalborg XFM from the admin screen.
+		FlowModule: FlowModuleConfig{
+			SensorType: FlowSensorNone,
+			Port:       "/dev/ttyUSB0",
+			BaudRate:   9600,
+			UseRS485:   false,
+			Address:    0x11,
+			Unit:       "kg/min",
+			PollPeriod: 500 * time.Millisecond,
 		},
 	}
 }

@@ -190,6 +190,82 @@ func TestNoSpuriousFaultWhileIdle(t *testing.T) {
 	}
 }
 
+func TestOutputPressureFilterRejectsIsolatedSpike(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.OutputPressureFilterSamples = 3
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	steps := []float64{10, 10, 40, 10, 10} // an isolated spike to 40 amid a steady 10
+	var got []float64
+	for _, v := range steps {
+		io.outP = v
+		c.superviseJob()
+		p, err := c.outputPressureBar()
+		if err != nil {
+			t.Fatalf("outputPressureBar error: %v", err)
+		}
+		got = append(got, p)
+	}
+	if got[2] != 10 {
+		t.Fatalf("filtered readings = %v, want the isolated spike at index 2 rejected (median stays 10)", got)
+	}
+}
+
+func TestOutputPressureFilterDisabledByDefaultPassesThroughRaw(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig()) // OutputPressureFilterSamples: 1 (disabled)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	io.outP = 123.4
+	c.superviseJob()
+	got, err := c.outputPressureBar()
+	if err != nil {
+		t.Fatalf("outputPressureBar error: %v", err)
+	}
+	if got != 123.4 {
+		t.Fatalf("outputPressureBar = %v, want 123.4 (raw passthrough - filtering is a no-op at the default)", got)
+	}
+}
+
+// TestSuperviseSafetyChecksRawOutputPressureEvenWhenFiltered confirms
+// the deliberate design choice documented on
+// Config.OutputPressureFilterSamples: the MaxHydrogenPressureBar safety
+// check must never be masked by output pressure filtering, the same
+// principle MaxStrokeTime already relies on for the hydraulic pressure
+// filters.
+func TestSuperviseSafetyChecksRawOutputPressureEvenWhenFiltered(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.OutputPressureFilterSamples = 5 // aggressive filtering, would mask a single-sample spike
+	cfg.Safety.MaxHydrogenPressureBar = 50
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	// Prime the filter buffer with several safe readings.
+	io.outP = 10
+	for i := 0; i < 4; i++ {
+		c.superviseJob()
+	}
+	if got := c.Status().Phase; got == PhaseFault {
+		t.Fatal("phase = fault before any overpressure reading")
+	}
+
+	// A single genuine overpressure sample - the median filter (a
+	// 5-sample window, 4 already primed at 10) would still report ~10
+	// for it, but the safety check must trip on the raw value anyway.
+	io.outP = 999
+	c.superviseSafety()
+
+	if got := c.Status().Phase; got != PhaseFault {
+		t.Fatalf("phase = %v, want fault - the safety check must never be masked by output pressure filtering", got)
+	}
+}
+
 func TestSuperviseSafetyFaultsOnLowHydraulicOil(t *testing.T) {
 	live := NewLiveConfig(DefaultConfig())
 	io := NewSimulatedIO()
@@ -531,5 +607,71 @@ func TestTickFansCoolingFanStaysOnAfterPumpsStopUntilBelowHysteresis(t *testing.
 	c.tickFans(time.Now())
 	if on, _ := io.RelayState(CoolingFan); on {
 		t.Fatal("CoolingFan should turn off once oil drops below setpoint-1")
+	}
+}
+
+// fakeFlowMeterIO wraps a full IO implementation (SimulatedIO in these
+// tests) and adds the optional FlowMeterIO capability, so
+// Controller.deliveredMassKg()'s preference order (real flow meter over
+// the tank pressure-differential estimate) can be tested without a real
+// CompositeIO/FlowModule - see FlowMeterIO in io.go.
+type fakeFlowMeterIO struct {
+	IO
+	totalKg    float64
+	err        error
+	resetCalls int
+}
+
+func (f *fakeFlowMeterIO) ReadFlowTotalKg() (float64, error) { return f.totalKg, f.err }
+func (f *fakeFlowMeterIO) ResetFlowTotal() error {
+	f.resetCalls++
+	return nil
+}
+
+func TestDeliveredMassPrefersFlowMeterWhenAvailable(t *testing.T) {
+	base := NewSimulatedIO()
+	defer base.Close()
+	fake := &fakeFlowMeterIO{IO: base, totalKg: 2.5}
+	live := NewLiveConfig(DefaultConfig())
+	c := NewController(live, fake)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 700, TargetMassKg: 999, Nozzle: Nozzle700}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Status().DeliveredMassKg; got != 2.5 {
+		t.Fatalf("DeliveredMassKg = %v, want 2.5 (from the flow meter)", got)
+	}
+}
+
+func TestDeliveredMassFallsBackToTankEstimateWhenFlowMeterErrors(t *testing.T) {
+	base := NewSimulatedIO()
+	defer base.Close()
+	fake := &fakeFlowMeterIO{IO: base, err: ErrSensorFault}
+	live := NewLiveConfig(DefaultConfig())
+	c := NewController(live, fake)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 700, TargetMassKg: 999, Nozzle: Nozzle700}); err != nil {
+		t.Fatal(err)
+	}
+	// Should fall back to the tank estimate rather than propagate the
+	// flow meter's error or panic - a non-negative value (likely ~0
+	// immediately after Start) confirms the fallback path ran.
+	if got := c.Status().DeliveredMassKg; got < 0 {
+		t.Fatalf("DeliveredMassKg = %v, want >= 0 (tank estimate fallback)", got)
+	}
+}
+
+func TestStartResetsFlowTotalizer(t *testing.T) {
+	base := NewSimulatedIO()
+	defer base.Close()
+	fake := &fakeFlowMeterIO{IO: base}
+	live := NewLiveConfig(DefaultConfig())
+	c := NewController(live, fake)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 700, TargetMassKg: 999, Nozzle: Nozzle700}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.resetCalls != 1 {
+		t.Fatalf("ResetFlowTotal called %d times, want 1", fake.resetCalls)
 	}
 }

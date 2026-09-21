@@ -155,7 +155,7 @@
     </div>
 
     <div class="actions">
-      <button class="primary" id="startBtn" onclick="startJob()" data-i18n="idx_start" disabled>Start</button>
+      <button class="primary" id="startBtn" onclick="startJob()" data-i18n="cust_fill_kg" disabled>Fill KG</button>
       <button class="warnbtn" id="fillPressureBtn" onclick="fillToPressure()" data-i18n="cust_fill_to_pressure" disabled>Fill to pressure</button>
     </div>
     <div class="actions">
@@ -272,6 +272,12 @@ class RollingGauge {
 // initI18n().then() below - rather than at top-level script load.
 let gauge;
 let massMeasurementEnabled = false;
+// hasFlowMeter is true only when a real mass flow sensor is selected
+// (config.flowModule.sensorType !== "none" - see FlowModuleConfig's doc
+// comment in config.go). Filling to an exact kg target is only offered
+// when that's backed by real measurement, not the tank
+// pressure-differential estimate MassInVolumeKg falls back to.
+let hasFlowMeter = false;
 let lastGaugeValue = 0;
 
 // --- Job setup ---------------------------------------------------------
@@ -370,15 +376,17 @@ function codeValid() {
   return !massMeasurementEnabled || codeLookupValid;
 }
 
-// applyMassMeasurementVisibility hides every mass/volume control when
-// the skid has no real mass instrumentation (see config.go's
-// MassMeasurementEnabled doc comment) - leaving nozzle/pressure as the
-// only job-setup controls. "Fill to pressure" becomes redundant once
-// Amount is gone (Start already submits the same uncapped mass target
-// in that mode - see startJob() below), so it's hidden too.
+// applyMassMeasurementVisibility hides the Amount field and "Fill KG"
+// button unless mass measurement is on AND a real flow sensor is
+// selected - filling to an exact kg target should only be offered when
+// it's backed by real measurement (see hasFlowMeter's doc comment
+// above), not the tank pressure-differential estimate. "Fill to
+// pressure" has no such dependency (a nozzle's rated pressure is always
+// known) so it's always available, in every mode.
 function applyMassMeasurementVisibility() {
-  document.getElementById('massAmountGroup').style.display = massMeasurementEnabled ? '' : 'none';
-  document.getElementById('fillPressureBtn').style.display = massMeasurementEnabled ? '' : 'none';
+  const canFillKg = massMeasurementEnabled && hasFlowMeter;
+  document.getElementById('massAmountGroup').style.display = canFillKg ? '' : 'none';
+  document.getElementById('startBtn').style.display = canFillKg ? '' : 'none';
 }
 
 function updateButtonStates() {
@@ -496,6 +504,7 @@ async function poll() {
 initI18n().then((config) => {
   document.title = t('idx_page_title');
   massMeasurementEnabled = !!(config && config.massMeasurementEnabled);
+  hasFlowMeter = !!(config && config.flowModule && config.flowModule.sensorType !== 'none');
   applyMassMeasurementVisibility();
   gauge = new RollingGauge(document.getElementById('gauge'), massMeasurementEnabled ? 2 : 3, massMeasurementEnabled ? 3 : 1);
   document.getElementById('gaugeUnitLabel').textContent = t(massMeasurementEnabled ? 'cust_kg_dispensed' : 'cust_output_pressure_gauge');

@@ -233,6 +233,18 @@ type RunnableIO interface {
 	SetRunning(running bool)
 }
 
+// FlowMeterIO is an optional capability an IO implementation can
+// support: a real mass flow totalizer. SimulatedIO does NOT implement
+// this - Controller type-asserts for it (mirroring setIORunning's
+// RunnableIO check) and falls back to the tank pressure-differential
+// estimate (see MassInVolumeKg in gas.go) whenever it's absent, or
+// ReadFlowTotalKg errors (no sensor selected, not yet connected, or a
+// comms fault) - see FlowModule in flowmodule.go.
+type FlowMeterIO interface {
+	ReadFlowTotalKg() (float64, error)
+	ResetFlowTotal() error
+}
+
 var ErrSensorFault = errors.New("sensor read fault")
 
 // SimulatedIO is a lightweight stand-in physics model, good enough to

@@ -23,6 +23,7 @@
     "durationMs": 8000
   },
   "pressureBlankTimeMs": 0,
+  "outputPressureFilterSamples": 1,
   "safety": {
     "maxHydraulicPressureBar": 25,
     "maxHydrogenPressureBar": 750,
@@ -91,5 +92,14 @@
       {"enabled": true, "assigned": "Motor1Powered", "port": 3},
       {"enabled": true, "assigned": "Motor2Powered", "port": 5}
     ]
+  },
+  "flowModule": {
+    "sensorType": "none",
+    "port": "/dev/ttyUSB0",
+    "baudRate": 9600,
+    "useRs485": false,
+    "address": 17,
+    "unit": "kg/min",
+    "pollPeriodMs": 500
   }
 }

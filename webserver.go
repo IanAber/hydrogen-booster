@@ -18,6 +18,7 @@ type WebServer struct {
 	pm          *PressureModule
 	tm          *TemperatureModule
 	dim         *DigitalInputModule
+	fm          *FlowModule
 	history     *HistoryStore
 	listenAddr  string
 	configPath  string
@@ -27,9 +28,9 @@ type WebServer struct {
 	validCodes  *ValidCodes
 }
 
-func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, history *HistoryStore, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
+func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, fm *FlowModule, history *HistoryStore, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
 	return &WebServer{
-		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim, history: history,
+		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim, fm: fm, history: history,
 		listenAddr: listenAddr, configPath: configPath, webDir: webDir,
 		auth: auth, dispenseLog: dispenseLog, validCodes: validCodes,
 	}
@@ -90,6 +91,8 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/api/temp/sim", w.requireAuth(w.handleTempSim))
 	mux.HandleFunc("/api/digital/status", w.requireAuth(w.handleDigitalStatus))
 	mux.HandleFunc("/api/digital/sim", w.requireAuth(w.handleDigitalSim))
+	mux.HandleFunc("/api/flow/status", w.requireAuth(w.handleFlowStatus))
+	mux.HandleFunc("/api/flow/reset", w.requireAuth(w.handleFlowReset))
 	mux.HandleFunc("/api/admin/password", w.requireAuth(w.handleChangePassword))
 	mux.HandleFunc("/api/records", w.requireAuth(w.handleRecords))
 	mux.HandleFunc("/api/admin/codes", w.requireAuth(w.handleAdminCodes))
@@ -336,6 +339,29 @@ func (w *WebServer) handleDigitalSim(rw http.ResponseWriter, r *http.Request) {
 	}
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(w.dim.Status())
+}
+
+func (w *WebServer) handleFlowStatus(rw http.ResponseWriter, r *http.Request) {
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(w.fm.Status())
+}
+
+// handleFlowReset zeroes the flow sensor's totalizer on demand - a
+// staff diagnostic action, useful for testing without starting a whole
+// fill job (Controller.Start already does this automatically at the
+// start of every job). No-op (still 200 OK) if no sensor is
+// configured/active - matches ResetTotal's own "handled" semantics.
+func (w *WebServer) handleFlowReset(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(rw, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, err := w.fm.ResetTotal(); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(w.fm.Status())
 }
 
 type changePasswordRequest struct {

@@ -87,6 +87,15 @@ var apiDocs = []apiEndpointDoc{
 		Request: `{"values":{"HydraulicOilLevel":false}}`,
 	},
 	{
+		Method: "GET", Path: "/api/flow/status", Auth: authStaff,
+		Summary:  "Mass flow sensor status: selected sensor type, whether it's currently active, current totalizer reading (kg), comms status.",
+		Response: `{"sensorType":"aalborg_xfm", "active":true, "lastUpdate":"2026-09-18T12:00:00Z", "totalKg":1.234, "ok":true}`,
+	},
+	{
+		Method: "POST", Path: "/api/flow/reset", Auth: authStaff,
+		Summary: "Zero the flow sensor's totalizer on demand (Controller already does this automatically at the start of every fill job). No-op if no sensor is configured/active. No request body.",
+	},
+	{
 		Method: "POST", Path: "/api/admin/password", Auth: authStaff,
 		Summary: "Change the admin password.",
 		Request: `{"currentPassword":"...", "newPassword":"..."}`,

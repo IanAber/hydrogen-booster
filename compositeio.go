@@ -13,10 +13,11 @@ type CompositeIO struct {
 	tm   *TemperatureModule
 	rm   *RelayModule
 	dim  *DigitalInputModule
+	fm   *FlowModule
 }
 
-func NewCompositeIO(base IO, pm *PressureModule, tm *TemperatureModule, rm *RelayModule, dim *DigitalInputModule) *CompositeIO {
-	return &CompositeIO{base: base, pm: pm, tm: tm, rm: rm, dim: dim}
+func NewCompositeIO(base IO, pm *PressureModule, tm *TemperatureModule, rm *RelayModule, dim *DigitalInputModule, fm *FlowModule) *CompositeIO {
+	return &CompositeIO{base: base, pm: pm, tm: tm, rm: rm, dim: dim, fm: fm}
 }
 
 func (c *CompositeIO) Close() error { return c.base.Close() }
@@ -97,4 +98,22 @@ func (c *CompositeIO) ReadDigitalInput(d DigitalInput) (bool, error) {
 		return v, nil
 	}
 	return c.base.ReadDigitalInput(d)
+}
+
+// ReadFlowTotalKg/ResetFlowTotal implement the optional FlowMeterIO
+// capability (see io.go) by delegating to the flow module - there is no
+// base/simulated fallback here (unlike every ReadX method above): with
+// no real sensor selected/active, FlowModule.ReadTotalKg reports
+// ok=false and Controller falls back to the tank pressure-differential
+// estimate itself, via the same FlowMeterIO type assertion.
+func (c *CompositeIO) ReadFlowTotalKg() (float64, error) {
+	if v, ok := c.fm.ReadTotalKg(); ok {
+		return v, nil
+	}
+	return 0, ErrSensorFault
+}
+
+func (c *CompositeIO) ResetFlowTotal() error {
+	_, err := c.fm.ResetTotal()
+	return err
 }

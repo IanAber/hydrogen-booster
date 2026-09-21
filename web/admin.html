@@ -247,6 +247,9 @@
       <div class="field"><label><span data-i18n="admin_pressure_blank">Pressure blanking after any valve switch</span><span class="unit">ms</span></label>
         <input type="number" id="pressureBlank" min="0" step="10"></div>
       <p class="hint" data-i18n="admin_pressure_blank_hint">Ignore pressure readings for spike detection on both circuits for this long after any relay on either circuit switches; 0 = disabled.</p>
+      <div class="field"><label><span data-i18n="admin_output_pressure_filter">Output pressure filter</span><span class="unit" data-i18n="admin_pressure_filter_unit">samples</span></label>
+        <input type="number" id="outputPressureFilter" min="1" step="1"></div>
+      <p class="hint" data-i18n="admin_output_pressure_filter_hint">Median filter over this many samples to reject brief output pressure spikes/dips caused by the delivery line's non-return valve opening and closing; 1 = disabled. Never applied to the max hydrogen pressure safety check, which always sees the raw reading.</p>
       <div class="field"><label><span data-i18n="admin_poll_period">Control loop poll period</span><span class="unit">ms</span></label>
         <input type="number" id="pollPeriod" min="10" step="10"></div>
     </div>
@@ -394,6 +397,46 @@
     <h2 data-i18n="admin_live_digital_readings">Live Digital Readings / Simulator</h2>
     <p class="hint" id="digitalCommsStatus">&nbsp;</p>
     <div id="digitalReadings"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="admin_flow_sensor_title">Hydrogen Mass Flow Meter</h2>
+    <p class="hint" data-i18n="admin_flow_sensor_hint">Only takes effect while "Hydrogen mass measurement" (System Branding, above) is also enabled.</p>
+    <div class="field" style="max-width:280px;">
+      <label data-i18n="admin_flow_sensor_type">Flow sensor</label>
+      <select id="flowSensorType" onchange="onFlowSensorTypeChange()">
+        <option value="none" data-i18n="opt_flow_sensor_none">None</option>
+        <option value="aalborg_xfm" data-i18n="opt_flow_sensor_aalborg">Aalborg XFM</option>
+      </select>
+    </div>
+
+    <div id="flowSensorFields">
+      <div class="row2">
+        <div class="field"><label data-i18n="admin_flow_port">Serial port</label>
+          <input type="text" id="flowPort" placeholder="/dev/ttyUSB0"></div>
+        <div class="field"><label data-i18n="admin_flow_baud">Baud rate</label>
+          <input type="number" id="flowBaud" min="1200" step="1"></div>
+      </div>
+      <label style="display:flex; align-items:center; gap:10px; margin:10px 0; cursor:pointer;">
+        <input type="checkbox" id="flowUseRs485" onchange="onFlowSensorTypeChange()" style="width:auto; height:16px; accent-color:var(--accent);">
+        <span data-i18n="admin_flow_use_rs485">Use RS-485 (multidrop) framing</span>
+      </label>
+      <div class="row2">
+        <div class="field" id="flowAddressField"><label data-i18n="admin_flow_address">RS-485 address</label>
+          <input type="number" id="flowAddress" min="0" max="255" step="1"></div>
+        <div class="field"><label data-i18n="admin_flow_unit">Unit</label>
+          <input type="text" id="flowUnit" placeholder="kg/min"></div>
+      </div>
+      <div class="field" style="max-width:220px;">
+        <label><span data-i18n="admin_can_poll_period">Poll period</span><span class="unit">ms</span></label>
+        <input type="number" id="flowPollPeriod" min="100" step="100">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="secondary" type="button" onclick="resetFlowTotal()" data-i18n="admin_flow_reset_totalizer">Reset totalizer</button>
+    </div>
+    <p class="hint" id="flowCommsStatus">&nbsp;</p>
   </div>
 
   <div class="actions">
@@ -695,6 +738,7 @@ async function load() {
     setv('ventFanOffDelay', c.ventFan.offDelayMs);
     setv('coolingFanSetpoint', c.coolingFan.setpointC);
     setv('pressureBlank', c.pressureBlankTimeMs);
+    setv('outputPressureFilter', c.outputPressureFilterSamples);
     setv('pollPeriod', c.pollPeriodMs);
 
     setv('canIface', c.canModule.interface);
@@ -724,6 +768,15 @@ async function load() {
     setv('digitalChip', c.digitalInputModule.chip);
     document.getElementById('digitalLive').checked = c.digitalInputModule.liveEnabled;
     buildDigitalInputRows(c.digitalInputModule.channels);
+
+    setv('flowSensorType', c.flowModule.sensorType);
+    setv('flowPort', c.flowModule.port);
+    setv('flowBaud', c.flowModule.baudRate);
+    document.getElementById('flowUseRs485').checked = c.flowModule.useRs485;
+    setv('flowAddress', c.flowModule.address);
+    setv('flowUnit', c.flowModule.unit);
+    setv('flowPollPeriod', c.flowModule.pollPeriodMs);
+    onFlowSensorTypeChange();
   } catch (e) {
     msg.textContent = t('admin_failed_load_config') + ' ' + e;
     msg.className = 'err';
@@ -772,6 +825,7 @@ async function apply(persist) {
     ventFan: { offDelayMs: int('ventFanOffDelay') },
     coolingFan: { setpointC: num('coolingFanSetpoint') },
     pressureBlankTimeMs: int('pressureBlank'),
+    outputPressureFilterSamples: int('outputPressureFilter'),
     safety: {
       maxHydraulicPressureBar: num('maxHyd'),
       maxHydrogenPressureBar: num('maxH2'),
@@ -808,6 +862,15 @@ async function apply(persist) {
       chip: v('digitalChip'),
       liveEnabled: document.getElementById('digitalLive').checked,
       channels: readDigitalInputRows(),
+    },
+    flowModule: {
+      sensorType: v('flowSensorType'),
+      port: v('flowPort'),
+      baudRate: int('flowBaud'),
+      useRs485: document.getElementById('flowUseRs485').checked,
+      address: int('flowAddress'),
+      unit: v('flowUnit'),
+      pollPeriodMs: int('flowPollPeriod'),
     },
   };
 
@@ -1106,6 +1169,54 @@ async function pollDigitalStatus() {
   }
 }
 
+// --- Hydrogen mass flow meter -----------------------------------------
+// No independent live/sim toggle here (unlike every module above) -
+// "None" in the dropdown already means "no sensor", and RS-485 address
+// only matters once RS-485 framing is selected - see FlowModuleConfig's
+// doc comment in config.go.
+function onFlowSensorTypeChange() {
+  const isAalborg = v('flowSensorType') === 'aalborg_xfm';
+  document.getElementById('flowSensorFields').style.display = isAalborg ? '' : 'none';
+  document.getElementById('flowAddressField').style.display =
+    document.getElementById('flowUseRs485').checked ? '' : 'none';
+}
+
+async function resetFlowTotal() {
+  const statusEl = document.getElementById('flowCommsStatus');
+  try {
+    const res = await fetch('/api/flow/reset', { method: 'POST' });
+    if (!res.ok) {
+      statusEl.textContent = t('admin_flow_reset_failed') + ' ' + await res.text();
+      return;
+    }
+    pollFlowStatus();
+  } catch (e) {
+    statusEl.textContent = t('admin_flow_reset_failed') + ' ' + e;
+  }
+}
+
+async function pollFlowStatus() {
+  try {
+    const res = await fetch('/api/flow/status');
+    const st = await res.json();
+    const statusEl = document.getElementById('flowCommsStatus');
+    if (st.sensorType === 'none') {
+      statusEl.innerHTML = t('admin_flow_no_sensor');
+      return;
+    }
+    if (!st.active) {
+      statusEl.innerHTML = `${t('admin_mode')}: <strong>${t('admin_flow_inactive')}</strong> &middot; ${t('admin_flow_inactive_hint')}`;
+      return;
+    }
+    const status = st.ok
+      ? `${st.totalKg.toFixed(3)} kg`
+      : `<span class="comms-bad">${t('admin_fault_word')}${st.error ? ' - ' + st.error : ''}</span>`;
+    statusEl.innerHTML = `${t('admin_mode')}: <strong>${t('common_live')}</strong> &middot; ${t('admin_flow_total')}: ${status}`;
+  } catch (e) {
+    document.getElementById('flowCommsStatus').textContent = t('admin_failed_flow_status') + ' ' + e;
+  }
+}
+
 // --- Change admin password -------------------------------------------
 // Independent of the config Apply/Save flow above: its own endpoint,
 // takes effect immediately (no restart, and no need to also hit Apply).
@@ -1256,6 +1367,8 @@ initI18n().then(() => {
   pollTempStatus();
   setInterval(pollDigitalStatus, 700);
   pollDigitalStatus();
+  setInterval(pollFlowStatus, 700);
+  pollFlowStatus();
 });
 </script>
 

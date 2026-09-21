@@ -140,24 +140,40 @@ type DigitalInputModuleConfigDTO struct {
 	Channels    []DigitalInputChannelConfigDTO `json:"channels"`
 }
 
+// FlowModuleConfigDTO has no "assigned channel" concept like the modules
+// above - there's exactly one flow sensor, selected (or not) by
+// SensorType itself; see FlowModuleConfig's doc comment in config.go
+// for why there's no separate LiveEnabled field.
+type FlowModuleConfigDTO struct {
+	SensorType   string `json:"sensorType"`
+	Port         string `json:"port"`
+	BaudRate     int    `json:"baudRate"`
+	UseRS485     bool   `json:"useRs485"`
+	Address      int    `json:"address"`
+	Unit         string `json:"unit"`
+	PollPeriodMs int    `json:"pollPeriodMs"`
+}
+
 type ConfigDTO struct {
-	SystemName             string                      `json:"systemName"`
-	Language               string                      `json:"language"`
-	MassMeasurementEnabled bool                        `json:"massMeasurementEnabled"`
-	PollPeriodMs           int                         `json:"pollPeriodMs"`
-	Stage1                 StageConfigDTO              `json:"stage1"`
-	Stage2                 StageConfigDTO              `json:"stage2"`
-	Homing                 HomingConfigDTO             `json:"homing"`
-	PressureBlankTimeMs    int                         `json:"pressureBlankTimeMs"`
-	Safety                 SafetyConfigDTO             `json:"safety"`
-	Tank                   TankConfigDTO               `json:"tank"`
-	Vent                   VentConfigDTO               `json:"vent"`
-	VentFan                VentFanConfigDTO            `json:"ventFan"`
-	CoolingFan             CoolingFanConfigDTO         `json:"coolingFan"`
-	CanModule              CanModuleConfigDTO          `json:"canModule"`
-	TempModule             TempModuleConfigDTO         `json:"tempModule"`
-	RelayModule            RelayModuleConfigDTO        `json:"relayModule"`
-	DigitalInputModule     DigitalInputModuleConfigDTO `json:"digitalInputModule"`
+	SystemName                  string                      `json:"systemName"`
+	Language                    string                      `json:"language"`
+	MassMeasurementEnabled      bool                        `json:"massMeasurementEnabled"`
+	PollPeriodMs                int                         `json:"pollPeriodMs"`
+	Stage1                      StageConfigDTO              `json:"stage1"`
+	Stage2                      StageConfigDTO              `json:"stage2"`
+	Homing                      HomingConfigDTO             `json:"homing"`
+	PressureBlankTimeMs         int                         `json:"pressureBlankTimeMs"`
+	OutputPressureFilterSamples int                         `json:"outputPressureFilterSamples"`
+	Safety                      SafetyConfigDTO             `json:"safety"`
+	Tank                        TankConfigDTO               `json:"tank"`
+	Vent                        VentConfigDTO               `json:"vent"`
+	VentFan                     VentFanConfigDTO            `json:"ventFan"`
+	CoolingFan                  CoolingFanConfigDTO         `json:"coolingFan"`
+	CanModule                   CanModuleConfigDTO          `json:"canModule"`
+	TempModule                  TempModuleConfigDTO         `json:"tempModule"`
+	RelayModule                 RelayModuleConfigDTO        `json:"relayModule"`
+	DigitalInputModule          DigitalInputModuleConfigDTO `json:"digitalInputModule"`
+	FlowModule                  FlowModuleConfigDTO         `json:"flowModule"`
 }
 
 func stageToDTO(s StageConfig) StageConfigDTO {
@@ -254,18 +270,31 @@ func digitalInputModuleToDTO(c DigitalInputModuleConfig) DigitalInputModuleConfi
 	return dto
 }
 
+func flowModuleToDTO(c FlowModuleConfig) FlowModuleConfigDTO {
+	return FlowModuleConfigDTO{
+		SensorType:   string(c.SensorType),
+		Port:         c.Port,
+		BaudRate:     c.BaudRate,
+		UseRS485:     c.UseRS485,
+		Address:      c.Address,
+		Unit:         c.Unit,
+		PollPeriodMs: int(c.PollPeriod / time.Millisecond),
+	}
+}
+
 // ToDTO converts the internal Config into the editable shape the admin
 // screen works with.
 func ToDTO(c Config) ConfigDTO {
 	return ConfigDTO{
-		SystemName:             c.SystemName,
-		Language:               c.Language,
-		MassMeasurementEnabled: c.MassMeasurementEnabled,
-		PollPeriodMs:           int(c.PollPeriod / time.Millisecond),
-		Stage1:                 stageToDTO(c.Stage1),
-		Stage2:                 stageToDTO(c.Stage2),
-		Homing:                 HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
-		PressureBlankTimeMs:    int(c.PressureBlankTime / time.Millisecond),
+		SystemName:                  c.SystemName,
+		Language:                    c.Language,
+		MassMeasurementEnabled:      c.MassMeasurementEnabled,
+		PollPeriodMs:                int(c.PollPeriod / time.Millisecond),
+		Stage1:                      stageToDTO(c.Stage1),
+		Stage2:                      stageToDTO(c.Stage2),
+		Homing:                      HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
+		PressureBlankTimeMs:         int(c.PressureBlankTime / time.Millisecond),
+		OutputPressureFilterSamples: c.OutputPressureFilterSamples,
 		Safety: SafetyConfigDTO{
 			MaxHydraulicPressureBar: c.Safety.MaxHydraulicPressureBar,
 			MaxHydrogenPressureBar:  c.Safety.MaxHydrogenPressureBar,
@@ -284,6 +313,7 @@ func ToDTO(c Config) ConfigDTO {
 		TempModule:         tempModuleToDTO(c.TempModule),
 		RelayModule:        relayModuleToDTO(c.RelayModule),
 		DigitalInputModule: digitalInputModuleToDTO(c.DigitalInputModule),
+		FlowModule:         flowModuleToDTO(c.FlowModule),
 	}
 }
 
@@ -355,6 +385,9 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	if dto.PressureBlankTimeMs < 0 {
 		return base, fmt.Errorf("pressure blank time cannot be negative")
 	}
+	if dto.OutputPressureFilterSamples < 1 {
+		return base, fmt.Errorf("output pressure filter samples must be at least 1 (1 = disabled)")
+	}
 
 	out := base
 	// A blank name is treated as "no change" rather than wiped to empty -
@@ -376,6 +409,7 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	out.Stage2 = applyStage(base.Stage2, dto.Stage2)
 	out.Homing.Duration = time.Duration(dto.Homing.DurationMs) * time.Millisecond
 	out.PressureBlankTime = time.Duration(dto.PressureBlankTimeMs) * time.Millisecond
+	out.OutputPressureFilterSamples = dto.OutputPressureFilterSamples
 	out.Safety.MaxHydraulicPressureBar = dto.Safety.MaxHydraulicPressureBar
 	out.Safety.MaxHydrogenPressureBar = dto.Safety.MaxHydrogenPressureBar
 	out.Safety.MaxTempC = dto.Safety.MaxTempC
@@ -411,7 +445,51 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	}
 	out.DigitalInputModule = digitalInputCfg
 
+	flowCfg, err := flowModuleFromDTO(base.FlowModule, dto.FlowModule)
+	if err != nil {
+		return base, err
+	}
+	out.FlowModule = flowCfg
+
 	return out, nil
+}
+
+// flowModuleFromDTO validates and merges the flow sensor module's DTO
+// onto the existing config. Port/BaudRate/Unit are only meaningful (and
+// only validated) once a real sensor type is selected - with
+// FlowSensorNone there's nothing to wire up yet, matching how the other
+// modules don't validate channel wiring for a disabled channel either.
+func flowModuleFromDTO(base FlowModuleConfig, dto FlowModuleConfigDTO) (FlowModuleConfig, error) {
+	sensorType := FlowSensorType(dto.SensorType)
+	if !ValidFlowSensorTypes[sensorType] {
+		return base, fmt.Errorf("unknown flow sensor type %q", dto.SensorType)
+	}
+	if sensorType != FlowSensorNone {
+		if strings.TrimSpace(dto.Port) == "" {
+			return base, fmt.Errorf("flow sensor port cannot be empty")
+		}
+		if dto.BaudRate <= 0 {
+			return base, fmt.Errorf("flow sensor baud rate must be greater than zero")
+		}
+		if dto.Address < 0 || dto.Address > 255 {
+			return base, fmt.Errorf("flow sensor address must be 0-255")
+		}
+		if strings.TrimSpace(dto.Unit) == "" {
+			return base, fmt.Errorf("flow sensor unit cannot be empty")
+		}
+		if dto.PollPeriodMs <= 0 {
+			return base, fmt.Errorf("flow sensor poll period must be greater than zero")
+		}
+	}
+	return FlowModuleConfig{
+		SensorType: sensorType,
+		Port:       strings.TrimSpace(dto.Port),
+		BaudRate:   dto.BaudRate,
+		UseRS485:   dto.UseRS485,
+		Address:    dto.Address,
+		Unit:       strings.TrimSpace(dto.Unit),
+		PollPeriod: time.Duration(dto.PollPeriodMs) * time.Millisecond,
+	}, nil
 }
 
 // canModuleFromDTO validates and merges the CAN pressure module's DTO

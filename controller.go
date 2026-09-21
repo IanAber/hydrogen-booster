@@ -87,6 +87,16 @@ type Controller struct {
 	pumpsOffSince time.Time
 	coolingFanOn  bool
 
+	// outputPressureFilterBuf/filteredOutputPressureBar/
+	// filteredOutputPressureErr are tickOutputPressureFilter's own
+	// persistent state - refreshed once per control-loop tick so every
+	// consumer (superviseJob, Status) sees the same filtered reading
+	// regardless of how often each is separately invoked (e.g. an HTTP
+	// status poll landing between ticks) - see tickOutputPressureFilter.
+	outputPressureFilterBuf   []float64
+	filteredOutputPressureBar float64
+	filteredOutputPressureErr error
+
 	// dispenseLog and validCodes are optional (nil-safe) - set via
 	// SetDispenseLog/SetValidCodes if the caller wants completed fills
 	// recorded and customer codes checked against an allow-list. Kept
@@ -147,6 +157,50 @@ func (c *Controller) Run() {
 			period = newPeriod
 		}
 	}
+}
+
+// tickOutputPressureFilter refreshes the median-filtered hydrogen
+// output pressure reading - called once per control-loop tick, from
+// superviseJob (itself called once per tick by Run()) - rejects brief
+// spikes/dips caused by the delivery line's non-return (check) valve
+// opening and closing. superviseJob's own target-reached detection and
+// Status (display/the customer gauge) read the cached result via
+// outputPressureBar() rather than re-filtering independently, so the
+// filter's window is anchored to the actual poll period regardless of
+// how often status is separately requested over HTTP.
+//
+// Deliberately NOT used by superviseSafety's MaxHydrogenPressureBar
+// check, which reads the sensor directly - see
+// Config.OutputPressureFilterSamples' doc comment in config.go for why.
+func (c *Controller) tickOutputPressureFilter() {
+	raw, err := c.io.ReadPressureBar(OutputPressure)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err != nil {
+		c.filteredOutputPressureErr = err
+		return
+	}
+	n := c.live.Snapshot().OutputPressureFilterSamples
+	if n <= 1 {
+		c.outputPressureFilterBuf = nil
+		c.filteredOutputPressureBar = raw
+		c.filteredOutputPressureErr = nil
+		return
+	}
+	c.outputPressureFilterBuf = append(c.outputPressureFilterBuf, raw)
+	if len(c.outputPressureFilterBuf) > n {
+		c.outputPressureFilterBuf = c.outputPressureFilterBuf[len(c.outputPressureFilterBuf)-n:]
+	}
+	c.filteredOutputPressureBar = median(c.outputPressureFilterBuf)
+	c.filteredOutputPressureErr = nil
+}
+
+// outputPressureBar returns the last filtered reading from
+// tickOutputPressureFilter.
+func (c *Controller) outputPressureBar() (float64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.filteredOutputPressureBar, c.filteredOutputPressureErr
 }
 
 func (c *Controller) superviseSafety() {
@@ -329,6 +383,13 @@ func (c *Controller) Start(job JobRequest) error {
 	if tp, err := c.io.ReadPressureBar(TankPressure); err == nil {
 		c.initialTankKg = MassInVolumeKg(tank.VolumeLitres, tp, tank.NominalTempC)
 	}
+	// Best-effort: zero a real flow meter's totalizer for this fill, if
+	// one is configured and active (see FlowMeterIO in io.go). A no-op
+	// when absent/inactive - deliveredMassKg() falls back to the tank
+	// estimate above in that case anyway.
+	if fm, ok := c.io.(FlowMeterIO); ok {
+		_ = fm.ResetFlowTotal()
+	}
 	c.phase = PhaseFilling
 	setIORunning(c.io, true)
 	_ = c.io.SetRelay(Pump1, true)
@@ -399,7 +460,19 @@ func (c *Controller) ClearFault() {
 	}
 }
 
+// deliveredMassKg prefers a real flow meter's totalizer (see
+// FlowMeterIO in io.go) when one is configured and active, falling
+// back to the tank pressure-differential estimate otherwise - the only
+// two situations that "otherwise" covers (no meter selected, or the
+// meter is selected but its last read errored) are treated identically
+// on purpose, so a disconnected/misconfigured meter degrades to the
+// existing estimate rather than reporting zero or stale data.
 func (c *Controller) deliveredMassKg() float64 {
+	if fm, ok := c.io.(FlowMeterIO); ok {
+		if v, err := fm.ReadFlowTotalKg(); err == nil {
+			return v
+		}
+	}
 	tank := c.live.Snapshot().Tank
 	tp, err := c.io.ReadPressureBar(TankPressure)
 	if err != nil {
@@ -417,7 +490,14 @@ func (c *Controller) deliveredMassKg() float64 {
 }
 
 // superviseJob advances the filling -> (venting) -> complete sequence.
+// Also refreshes the filtered output pressure reading (see
+// tickOutputPressureFilter) - called once per control-loop tick
+// regardless of phase, so Status()'s display value stays current even
+// when idle, and so a direct call (as the tests do, without going
+// through Run()) still sees a consistent, freshly-filtered value.
 func (c *Controller) superviseJob() {
+	c.tickOutputPressureFilter()
+
 	c.mu.Lock()
 	phase := c.phase
 	job := c.job
@@ -427,7 +507,7 @@ func (c *Controller) superviseJob() {
 		return
 	}
 
-	outP, err := c.io.ReadPressureBar(OutputPressure)
+	outP, err := c.outputPressureBar()
 	if err != nil {
 		return
 	}
@@ -553,7 +633,7 @@ func (c *Controller) Status() Status {
 	}
 	c.mu.Unlock()
 
-	outP, _ := c.io.ReadPressureBar(OutputPressure)
+	outP, _ := c.outputPressureBar()
 	outT, _ := c.io.ReadTempC(OutputTemp)
 	tankP, _ := c.io.ReadPressureBar(TankPressure)
 	hydOilT, _ := c.io.ReadTempC(HydOilTemp)

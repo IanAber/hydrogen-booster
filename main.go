@@ -93,13 +93,25 @@ func main() {
 	go dim.Run()
 	defer dim.Stop()
 
+	// Real hardware driver #5: an optional real mass flow sensor
+	// (currently only the Aalborg XFM series, over a serial link).
+	// Unlike the modules above, this one isn't gated by its own
+	// LiveEnabled flag - it only connects while BOTH
+	// Config.MassMeasurementEnabled and FlowModuleConfig.SensorType
+	// select it (see FlowModule's doc comment in flowmodule.go).
+	// Controller.deliveredMassKg falls back to the tank
+	// pressure-differential estimate whenever this isn't the case.
+	fm := NewFlowModule(live, OpenSerialPort)
+	go fm.Run()
+	defer fm.Stop()
+
 	// Everything else - any relay/pressure/temperature/digital-input
 	// channel not assigned to a real module above - is still simulated
 	// pending real drivers for that hardware.
 	hw := NewSimulatedIO()
 	defer hw.Close()
 
-	io := NewCompositeIO(hw, pm, tm, rm, dim)
+	io := NewCompositeIO(hw, pm, tm, rm, dim, fm)
 
 	ctrl := NewController(live, io)
 	ctrl.SetDispenseLog(dispenseLog)
@@ -117,6 +129,6 @@ func main() {
 	histLogger := NewHistoryLogger(history, io, *historySampleInterval, time.Duration(*historyRetentionDays)*24*time.Hour)
 	go histLogger.Run()
 
-	srv := NewWebServer(ctrl, live, pm, tm, dim, history, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
+	srv := NewWebServer(ctrl, live, pm, tm, dim, fm, history, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
 	log.Fatal(srv.ListenAndServe())
 }
