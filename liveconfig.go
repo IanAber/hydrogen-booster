@@ -51,7 +51,7 @@ type StageConfigDTO struct {
 	MaxStrokeTimeMs int     `json:"maxStrokeTimeMs"`
 	SpikeDeltaBar   float64 `json:"spikeDeltaBar"`
 	SpikeWindowMs   int     `json:"spikeWindowMs"`
-	PulseDurationMs int     `json:"pulseDurationMs"`
+	ReverseDelayMs  int     `json:"reverseDelayMs"`
 }
 
 type SafetyConfigDTO struct {
@@ -59,7 +59,6 @@ type SafetyConfigDTO struct {
 	MaxHydrogenPressureBar  float64 `json:"maxHydrogenPressureBar"`
 	MaxTempC                float64 `json:"maxTempC"`
 	SensorMaxAgeMs          int     `json:"sensorMaxAgeMs"`
-	MaxSyncStrokeLead       int     `json:"maxSyncStrokeLead"`
 }
 
 type TankConfigDTO struct {
@@ -69,6 +68,10 @@ type TankConfigDTO struct {
 }
 
 type VentConfigDTO struct {
+	DurationMs int `json:"durationMs"`
+}
+
+type HomingConfigDTO struct {
 	DurationMs int `json:"durationMs"`
 }
 
@@ -134,6 +137,7 @@ type ConfigDTO struct {
 	PollPeriodMs       int                         `json:"pollPeriodMs"`
 	Stage1             StageConfigDTO              `json:"stage1"`
 	Stage2             StageConfigDTO              `json:"stage2"`
+	Homing             HomingConfigDTO             `json:"homing"`
 	Safety             SafetyConfigDTO             `json:"safety"`
 	Tank               TankConfigDTO               `json:"tank"`
 	Vent               VentConfigDTO               `json:"vent"`
@@ -150,7 +154,7 @@ func stageToDTO(s StageConfig) StageConfigDTO {
 		MaxStrokeTimeMs: int(s.MaxStrokeTime / time.Millisecond),
 		SpikeDeltaBar:   s.SpikeDeltaBar,
 		SpikeWindowMs:   int(s.SpikeWindow / time.Millisecond),
-		PulseDurationMs: int(s.PulseDuration / time.Millisecond),
+		ReverseDelayMs:  int(s.ReverseDelay / time.Millisecond),
 	}
 }
 
@@ -245,12 +249,12 @@ func ToDTO(c Config) ConfigDTO {
 		PollPeriodMs: int(c.PollPeriod / time.Millisecond),
 		Stage1:       stageToDTO(c.Stage1),
 		Stage2:       stageToDTO(c.Stage2),
+		Homing:       HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
 		Safety: SafetyConfigDTO{
 			MaxHydraulicPressureBar: c.Safety.MaxHydraulicPressureBar,
 			MaxHydrogenPressureBar:  c.Safety.MaxHydrogenPressureBar,
 			MaxTempC:                c.Safety.MaxTempC,
 			SensorMaxAgeMs:          int(c.Safety.SensorMaxAge / time.Millisecond),
-			MaxSyncStrokeLead:       c.Safety.MaxSyncStrokeLead,
 		},
 		Tank: TankConfigDTO{
 			VolumeLitres:       c.Tank.VolumeLitres,
@@ -272,7 +276,7 @@ func applyStage(base StageConfig, dto StageConfigDTO) StageConfig {
 	base.MaxStrokeTime = time.Duration(dto.MaxStrokeTimeMs) * time.Millisecond
 	base.SpikeDeltaBar = dto.SpikeDeltaBar
 	base.SpikeWindow = time.Duration(dto.SpikeWindowMs) * time.Millisecond
-	base.PulseDuration = time.Duration(dto.PulseDurationMs) * time.Millisecond
+	base.ReverseDelay = time.Duration(dto.ReverseDelayMs) * time.Millisecond
 	return base
 }
 
@@ -289,8 +293,8 @@ func validateStageDTO(label string, s StageConfigDTO) error {
 	if s.SpikeWindowMs <= 0 {
 		return fmt.Errorf("%s: spike window must be greater than zero", label)
 	}
-	if s.PulseDurationMs <= 0 {
-		return fmt.Errorf("%s: pulse duration must be greater than zero", label)
+	if s.ReverseDelayMs <= 0 {
+		return fmt.Errorf("%s: reverse delay must be greater than zero", label)
 	}
 	return nil
 }
@@ -314,14 +318,14 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	if dto.Safety.SensorMaxAgeMs < 0 {
 		return base, fmt.Errorf("sensor max age cannot be negative")
 	}
-	if dto.Safety.MaxSyncStrokeLead < 1 {
-		return base, fmt.Errorf("max sync stroke lead must be at least 1")
-	}
 	if dto.Tank.VolumeLitres <= 0 {
 		return base, fmt.Errorf("tank volume must be greater than zero")
 	}
 	if dto.Vent.DurationMs < 0 {
 		return base, fmt.Errorf("vent duration cannot be negative")
+	}
+	if dto.Homing.DurationMs < 0 {
+		return base, fmt.Errorf("homing duration cannot be negative")
 	}
 
 	out := base
@@ -341,11 +345,11 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	out.PollPeriod = time.Duration(dto.PollPeriodMs) * time.Millisecond
 	out.Stage1 = applyStage(base.Stage1, dto.Stage1)
 	out.Stage2 = applyStage(base.Stage2, dto.Stage2)
+	out.Homing.Duration = time.Duration(dto.Homing.DurationMs) * time.Millisecond
 	out.Safety.MaxHydraulicPressureBar = dto.Safety.MaxHydraulicPressureBar
 	out.Safety.MaxHydrogenPressureBar = dto.Safety.MaxHydrogenPressureBar
 	out.Safety.MaxTempC = dto.Safety.MaxTempC
 	out.Safety.SensorMaxAge = time.Duration(dto.Safety.SensorMaxAgeMs) * time.Millisecond
-	out.Safety.MaxSyncStrokeLead = dto.Safety.MaxSyncStrokeLead
 	out.Tank.VolumeLitres = dto.Tank.VolumeLitres
 	out.Tank.NominalPressureBar = dto.Tank.NominalPressureBar
 	out.Tank.NominalTempC = dto.Tank.NominalTempC
@@ -532,10 +536,32 @@ func relayModuleFromDTO(base RelayModuleConfig, dto RelayModuleConfigDTO) (Relay
 	}, nil
 }
 
-// validDigitalInputPorts is the hardware-constrained set of gpiochip0
+// digitalInputConnectors is the hardware-constrained set of gpiochip0
 // line numbers these digital inputs may be wired to - unlike the relay
-// outputs' free 0-15 range, only these lines are usable on this board.
-var validDigitalInputPorts = map[int]bool{2: true, 3: true, 5: true, 6: true, 7: true, 12: true, 13: true}
+// outputs' free 0-15 range, only these lines are usable on this board -
+// each paired with the silkscreened connector label operators actually
+// see on the board (the admin screen shows the label, not the raw GPIO
+// line number). Input-5 has no entry - its line isn't wired out here.
+var digitalInputConnectors = []struct {
+	Port  int
+	Label string
+}{
+	{2, "Input-1"},
+	{3, "Input-2"},
+	{5, "Input-3"},
+	{6, "Input-4"},
+	{12, "Input-6"},
+	{13, "Input-7"},
+	{16, "Input-8"},
+}
+
+var validDigitalInputPorts = func() map[int]bool {
+	m := make(map[int]bool, len(digitalInputConnectors))
+	for _, c := range digitalInputConnectors {
+		m[c.Port] = true
+	}
+	return m
+}()
 
 // digitalInputModuleFromDTO validates and merges the digital input
 // module's DTO onto the existing config, mirroring relayModuleFromDTO's
@@ -564,7 +590,7 @@ func digitalInputModuleFromDTO(base DigitalInputModuleConfig, dto DigitalInputMo
 			}
 			seenSignal[d] = true
 			if !validDigitalInputPorts[chDto.Port] {
-				return base, fmt.Errorf("digital input channel %d: port %d is not one of the allowed lines (2,3,5,6,7,12,13)", i, chDto.Port)
+				return base, fmt.Errorf("digital input channel %d: %d is not one of the available input connectors (Input-1, Input-2, Input-3, Input-4, Input-6, Input-7, Input-8)", i, chDto.Port)
 			}
 			if seenPort[chDto.Port] {
 				return base, fmt.Errorf("digital input channel %d: port %d is already used by another enabled channel", i, chDto.Port)

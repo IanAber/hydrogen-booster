@@ -2,22 +2,35 @@ package main
 
 import "time"
 
-// StageConfig tunes one hydraulic stage (Stage 1 drives cylinders A/B,
-// Stage 2 drives cylinders C/D). Reversal happens on whichever comes
-// first: MaxStrokeTime elapses, or hydraulic pressure rises by
-// SpikeDeltaBar within SpikeWindow (the signature of the ram stalling
-// against the gas column at the end of a stroke).
+// StageConfig tunes one hydraulic circuit (Stage 1 = direction valve A +
+// relief valve B, Stage 2 = direction valve C + relief valve D). A/C
+// hold whatever direction they're commanded to, but the ram can't
+// physically follow that command while the circuit is under pressure -
+// the relief valve must be briefly opened (see Stages in stage.go) for
+// the direction change to actually take mechanical effect. A stroke
+// ends on whichever comes first: MaxStrokeTime elapses, or hydraulic
+// pressure rises by SpikeDeltaBar within SpikeWindow (the signature of
+// the ram stalling against the gas column at the end of a stroke).
 type StageConfig struct {
 	Name              string
-	DirRelay          RelayOutput
-	PulseRelay        RelayOutput
+	DirRelay          RelayOutput // A or C
+	ReliefRelay       RelayOutput // B or D
 	HydPressureSensor SensorInput
 
 	MinStrokeTime time.Duration // ignore spike detection until this long into the stroke (debounce)
-	MaxStrokeTime time.Duration // hard timeout, reverses regardless of pressure
+	MaxStrokeTime time.Duration // hard timeout, ends the stroke regardless of pressure
 	SpikeDeltaBar float64       // pressure rise over SpikeWindow that counts as "end of stroke"
 	SpikeWindow   time.Duration
-	PulseDuration time.Duration // how long the secondary valve is energised, coincident with direction change
+	ReverseDelay  time.Duration // gap between commanding the new direction and re-closing the relief valve, letting the direction valve mechanically settle
+}
+
+// HomingConfig controls the startup sequence that gets both cylinders
+// to the same physical reference position before the first stroke:
+// both relief valves open and both direction valves forced off for
+// Duration, so neither ram is driven and both settle to the same end
+// regardless of where they were left by a previous run.
+type HomingConfig struct {
+	Duration time.Duration
 }
 
 // SafetyConfig holds interlock limits, independent of any single stage.
@@ -26,7 +39,6 @@ type SafetyConfig struct {
 	MaxHydrogenPressureBar  float64
 	MaxTempC                float64
 	SensorMaxAge            time.Duration
-	MaxSyncStrokeLead       int // stage 2 may not run more than this many strokes ahead of stage 1
 }
 
 // CanChannelConfig is the calibration and assignment for one physical
@@ -194,6 +206,7 @@ type Config struct {
 	PollPeriod         time.Duration
 	Stage1             StageConfig
 	Stage2             StageConfig
+	Homing             HomingConfig
 	Safety             SafetyConfig
 	Tank               TankConfig
 	Vent               VentConfig
@@ -214,29 +227,29 @@ func DefaultConfig() Config {
 		Language:   "en",
 		PollPeriod: 100 * time.Millisecond,
 		Stage1: StageConfig{
-			Name: "Stage 1 (A/B)", DirRelay: Valve1A, PulseRelay: Valve1B,
+			Name: "Stage 1 (A/B)", DirRelay: Valve1A, ReliefRelay: Valve1B,
 			HydPressureSensor: Hyd1Pressure,
 			MinStrokeTime:     300 * time.Millisecond,
 			MaxStrokeTime:     6 * time.Second,
 			SpikeDeltaBar:     15,
 			SpikeWindow:       250 * time.Millisecond,
-			PulseDuration:     500 * time.Millisecond,
+			ReverseDelay:      500 * time.Millisecond,
 		},
 		Stage2: StageConfig{
-			Name: "Stage 2 (C/D)", DirRelay: Valve2A, PulseRelay: Valve2B,
+			Name: "Stage 2 (C/D)", DirRelay: Valve2A, ReliefRelay: Valve2B,
 			HydPressureSensor: Hyd2Pressure,
 			MinStrokeTime:     300 * time.Millisecond,
 			MaxStrokeTime:     6 * time.Second,
 			SpikeDeltaBar:     15,
 			SpikeWindow:       250 * time.Millisecond,
-			PulseDuration:     500 * time.Millisecond,
+			ReverseDelay:      500 * time.Millisecond,
 		},
+		Homing: HomingConfig{Duration: 8 * time.Second},
 		Safety: SafetyConfig{
 			MaxHydraulicPressureBar: 250,
 			MaxHydrogenPressureBar:  750,
 			MaxTempC:                85,
 			SensorMaxAge:            2 * time.Second,
-			MaxSyncStrokeLead:       1,
 		},
 		Tank: TankConfig{VolumeLitres: 300, NominalPressureBar: 200, NominalTempC: 15},
 		Vent: VentConfig{Duration: 5 * time.Second},

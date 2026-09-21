@@ -63,8 +63,7 @@ type Controller struct {
 	live *LiveConfig
 	io   IO
 
-	stage1 *Stage
-	stage2 *Stage
+	stages *Stages
 
 	mu            sync.Mutex
 	phase         Phase
@@ -106,27 +105,17 @@ func (c *Controller) SetValidCodes(v *ValidCodes) {
 
 func NewController(live *LiveConfig, io IO) *Controller {
 	c := &Controller{live: live, io: io, phase: PhaseIdle}
-	c.stage1 = NewStage(live, 1, io)
-	c.stage2 = NewStage(live, 2, io)
+	c.stages = NewStages(live, io)
 
-	// Synchronisation: Stage 2 is fed by Stage 1's output, so it must not
-	// be allowed to run away from (or lag too far behind) Stage 1. Stage 2
-	// simply holds its current direction-valve state, mid-dwell, if
-	// starting a new stroke would put it more than MaxSyncStrokeLead
-	// strokes ahead of Stage 1; it re-checks every tick and proceeds as
-	// soon as Stage 1 catches up. MaxSyncStrokeLead is itself live-tunable.
-	c.stage1.AllowReverse = func(s *Stage) bool { return true }
-	c.stage2.AllowReverse = func(s *Stage) bool {
-		lead := int64(c.stage2.StrokeCount()) - int64(c.stage1.StrokeCount())
-		return lead < int64(c.live.Snapshot().Safety.MaxSyncStrokeLead)
-	}
-	c.stage1.OnReversal = func(s *Stage) {
-		st := s.Status()
-		log.Printf("%s reversed -> %s (stroke %d)", st.Name, st.Direction, st.StrokeCount)
-	}
-	c.stage2.OnReversal = func(s *Stage) {
-		st := s.Status()
-		log.Printf("%s reversed -> %s (stroke %d)", st.Name, st.Direction, st.StrokeCount)
+	// The two circuits always reverse together (see Stages' doc
+	// comment for the barrier that guarantees this) - a single log line
+	// per synchronized reversal, rather than one per stage.
+	c.stages.OnReversal = func(dir Direction, strokeCount uint64) {
+		d := "DOWN"
+		if dir == DirUp {
+			d = "UP"
+		}
+		log.Printf("Stages reversed -> %s (stroke %d)", d, strokeCount)
 	}
 	return c
 }
@@ -139,8 +128,7 @@ func (c *Controller) Run() {
 	t := time.NewTicker(period)
 	defer t.Stop()
 	for now := range t.C {
-		c.stage1.Tick(now)
-		c.stage2.Tick(now)
+		c.stages.Tick(now)
 		c.superviseSafety()
 		c.superviseJob()
 
@@ -215,8 +203,7 @@ func (c *Controller) raiseFault(msg string) {
 	c.mu.Unlock()
 	if !already {
 		log.Printf("FAULT: %s", msg)
-		c.stage1.Stop()
-		c.stage2.Stop()
+		c.stages.Stop()
 		_ = c.io.SetRelay(VentValve, false)
 		setIORunning(c.io, false)
 		_ = c.io.SetRelay(Pump1, false)
@@ -285,8 +272,7 @@ func (c *Controller) Start(job JobRequest) error {
 	_ = c.io.SetRelay(Pump1, true)
 	_ = c.io.SetRelay(Pump2, true)
 
-	c.stage1.Start()
-	c.stage2.Start()
+	c.stages.Start()
 	codeMsg := "no customer code"
 	if job.CustomerCode != "" {
 		codeMsg = "customer code " + job.CustomerCode
@@ -322,8 +308,7 @@ func (c *Controller) Stop() {
 	wasFilling := c.phase == PhaseFilling || c.phase == PhaseVenting
 	c.mu.Unlock()
 
-	c.stage1.Stop()
-	c.stage2.Stop()
+	c.stages.Stop()
 	_ = c.io.SetRelay(VentValve, false)
 	setIORunning(c.io, false)
 	_ = c.io.SetRelay(Pump1, false)
@@ -389,8 +374,7 @@ func (c *Controller) superviseJob() {
 		return
 	}
 
-	c.stage1.Stop()
-	c.stage2.Stop()
+	c.stages.Stop()
 	setIORunning(c.io, false)
 	_ = c.io.SetRelay(Pump1, false)
 	_ = c.io.SetRelay(Pump2, false)
@@ -526,14 +510,15 @@ func (c *Controller) Status() Status {
 		deliveredMass = c.deliveredMassKg()
 	}
 
+	s1, s2 := c.stages.Status()
 	return Status{
 		Phase: phase, Running: phase == PhaseFilling || phase == PhaseVenting,
 		Nozzle: int(job.Nozzle), TargetPressureBar: job.TargetPressureBar, TargetMassKg: job.TargetMassKg,
 		OutputPressureBar: outP, OutputTempC: outT,
 		TankPressureBar: tankP, HydOilTempC: hydOilT,
 		DeliveredMassKg: deliveredMass,
-		Stage1:          c.stage1.Status(),
-		Stage2:          c.stage2.Status(),
+		Stage1:          s1,
+		Stage2:          s2,
 		VentOpen:        vent, Faults: faults, StartedAt: started, ElapsedSec: elapsed,
 	}
 }

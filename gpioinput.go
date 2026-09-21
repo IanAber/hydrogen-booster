@@ -50,7 +50,19 @@ type DigitalInputModule struct {
 // opens a group of GPIO lines as inputs - pass OpenDigitalInputLines for
 // the real driver; tests pass a fake instead.
 func NewDigitalInputModule(live *LiveConfig, openFn func(chipPath string, offsets []int, consumer string) (DigitalInputLines, error)) *DigitalInputModule {
-	return &DigitalInputModule{live: live, openFn: openFn, simValues: map[DigitalInput]bool{}, stop: make(chan struct{})}
+	return &DigitalInputModule{
+		live:   live,
+		openFn: openFn,
+		// HydraulicOilLevel defaults to false (0/low = sufficient oil).
+		// Motor1Powered/Motor2Powered start true (high = confirmed
+		// stopped, matching both pumps starting off) - the same
+		// defaults SimulatedIO seeds - so the admin screen's live
+		// panel reads correctly before any pump command has ever
+		// mirrored a value in here (see CompositeIO.SetRelay) or an
+		// admin has touched a sim value themselves.
+		simValues: map[DigitalInput]bool{Motor1Powered: true, Motor2Powered: true},
+		stop:      make(chan struct{}),
+	}
 }
 
 // digitalInputConfigSignature changes whenever the chip path or the set
@@ -126,15 +138,25 @@ func (m *DigitalInputModule) openLines(cfg DigitalInputModuleConfig) error {
 		return fmt.Errorf("no digital input channels enabled")
 	}
 
+	// Release any existing line request before asking for the new one -
+	// the new set of enabled lines usually overlaps the old set (e.g.
+	// adding one more channel keeps every previously-enabled line too),
+	// and the kernel refuses to grant a second exclusive request for a
+	// line this same handle is still holding open.
+	m.mu.Lock()
+	oldLines := m.lines
+	m.lines = nil
+	m.mu.Unlock()
+	if oldLines != nil {
+		_ = oldLines.Close()
+	}
+
 	lines, err := m.openFn(cfg.Chip, offsets, "hydrogen-booster")
 	if err != nil {
 		return fmt.Errorf("open %s: %w", cfg.Chip, err)
 	}
 
 	m.mu.Lock()
-	if m.lines != nil {
-		_ = m.lines.Close()
-	}
 	m.lines = lines
 	m.portIndex = idx
 	m.openSig = digitalInputConfigSignature(cfg)

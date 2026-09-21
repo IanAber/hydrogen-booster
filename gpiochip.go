@@ -124,15 +124,25 @@ func (m *RelayModule) openLines(cfg RelayModuleConfig) error {
 		return fmt.Errorf("no relay channels enabled")
 	}
 
+	// Release any existing line request before asking for the new one -
+	// the new set of enabled lines usually overlaps the old set (e.g.
+	// adding one more channel keeps every previously-enabled line too),
+	// and the kernel refuses to grant a second exclusive request for a
+	// line this same handle is still holding open.
+	m.mu.Lock()
+	oldLines := m.lines
+	m.lines = nil
+	m.mu.Unlock()
+	if oldLines != nil {
+		_ = oldLines.Close()
+	}
+
 	lines, err := m.openFn(cfg.Chip, offsets, "hydrogen-booster")
 	if err != nil {
 		return fmt.Errorf("open %s: %w", cfg.Chip, err)
 	}
 
 	m.mu.Lock()
-	if m.lines != nil {
-		_ = m.lines.Close()
-	}
 	m.lines = lines
 	m.portIndex = idx
 	m.openSig = relayConfigSignature(cfg)

@@ -6,7 +6,7 @@
     "maxStrokeTimeMs": 6000,
     "spikeDeltaBar": 15,
     "spikeWindowMs": 250,
-    "pulseDurationMs": 500
+    "reverseDelayMs": 500
   },
   "stage2": {
     "name": "Stage 2 (C/D)",
@@ -14,14 +14,16 @@
     "maxStrokeTimeMs": 6000,
     "spikeDeltaBar": 15,
     "spikeWindowMs": 250,
-    "pulseDurationMs": 500
+    "reverseDelayMs": 500
+  },
+  "homing": {
+    "durationMs": 8000
   },
   "safety": {
     "maxHydraulicPressureBar": 25,
     "maxHydrogenPressureBar": 750,
     "maxTempC": 85,
-    "sensorMaxAgeMs": 2000,
-    "maxSyncStrokeLead": 1
+    "sensorMaxAgeMs": 2000
   },
   "tank": {
     "volumeLitres": 300,

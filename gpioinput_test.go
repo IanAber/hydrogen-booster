@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -31,6 +32,29 @@ func fakeDigitalOpenFn(lines *fakeDigitalInputLines, offsets *[]int) func(string
 	return func(chip string, off []int, consumer string) (DigitalInputLines, error) {
 		*offsets = append([]int{}, off...)
 		return lines, nil
+	}
+}
+
+// loggingDigitalInputLines records "open"/"close" events (with the
+// offsets an open call was for) into a shared log, so a test can assert
+// the *order* open/close happen in - not just that both eventually
+// occur - which is exactly what the real GPIO_V2_GET_LINE_IOCTL ordering
+// bug (busy line still held by a not-yet-closed prior request) needs.
+type loggingDigitalInputLines struct {
+	log *[]string
+}
+
+func (f *loggingDigitalInputLines) GetValues() (uint64, error) { return 0, nil }
+func (f *loggingDigitalInputLines) Close() error {
+	*f.log = append(*f.log, "close")
+	return nil
+}
+
+func loggingDigitalOpenFn(log *[]string) func(string, []int, string) (DigitalInputLines, error) {
+	return func(chip string, off []int, consumer string) (DigitalInputLines, error) {
+		cp := append([]int{}, off...)
+		*log = append(*log, fmt.Sprintf("open %v", cp))
+		return &loggingDigitalInputLines{log: log}, nil
 	}
 }
 
@@ -138,6 +162,47 @@ func TestDigitalInputModuleReopensOnConfigChange(t *testing.T) {
 	}
 	if len(secondOffsets) != 1 || secondOffsets[0] != 13 {
 		t.Errorf("secondOffsets = %v, want [13]", secondOffsets)
+	}
+}
+
+// TestDigitalInputModuleClosesBeforeReopeningOverlappingLines reproduces
+// a real GPIO_V2_GET_LINE_IOCTL failure seen commissioning against real
+// hardware: enabling a second channel while a first is already live
+// requests a new combined line set that *overlaps* the still-open old
+// one (every previously-enabled line stays enabled), and the kernel
+// refuses a second exclusive request for a line the same process is
+// still holding open via the old handle. openLines must therefore close
+// the old handle before requesting the new one, not after.
+func TestDigitalInputModuleClosesBeforeReopeningOverlappingLines(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DigitalInputModule.LiveEnabled = true
+	cfg.DigitalInputModule.Channels[0] = DigitalInputChannelConfig{Enabled: true, Assigned: HydraulicOilLevel, Port: 2}
+	cfg.DigitalInputModule.Channels[1] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[2] = DigitalInputChannelConfig{Enabled: false}
+	live := NewLiveConfig(cfg)
+
+	var log []string
+	dim := NewDigitalInputModule(live, loggingDigitalOpenFn(&log))
+	if err := dim.openLines(cfg.DigitalInputModule); err != nil {
+		t.Fatal(err)
+	}
+
+	// Enable a second channel - port 2 stays enabled, so the new
+	// combined set [2 3] overlaps the still-open [2].
+	cfg2 := cfg
+	cfg2.DigitalInputModule.Channels[1] = DigitalInputChannelConfig{Enabled: true, Assigned: Motor1Powered, Port: 3}
+	if err := dim.openLines(cfg2.DigitalInputModule); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"open [2]", "close", "open [2 3]"}
+	if len(log) != len(want) {
+		t.Fatalf("log = %v, want %v", log, want)
+	}
+	for i := range want {
+		if log[i] != want[i] {
+			t.Fatalf("log = %v, want %v", log, want)
+		}
 	}
 }
 

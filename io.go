@@ -291,13 +291,21 @@ func (s *SimulatedIO) step() {
 	jitter := func() float64 { return (rand.Float64() - 0.5) * 0.6 }
 
 	if s.running {
-		s.hyd1P += 1.2 + jitter()
-		s.hyd2P += 1.4 + jitter()
-		if s.hyd1P > 220 {
-			s.hyd1P = 220
+		// Pressure only builds while the circuit's relief valve is
+		// closed (Valve1B/Valve2B off) - matching the real hydraulics,
+		// where an open relief valve prevents pressure from building at
+		// all (homing, or waiting at the reversal barrier).
+		if !s.relays[Valve1B] {
+			s.hyd1P += 1.2 + jitter()
+			if s.hyd1P > 220 {
+				s.hyd1P = 220
+			}
 		}
-		if s.hyd2P > 220 {
-			s.hyd2P = 220
+		if !s.relays[Valve2B] {
+			s.hyd2P += 1.4 + jitter()
+			if s.hyd2P > 220 {
+				s.hyd2P = 220
+			}
 		}
 
 		if s.outP < 720 {

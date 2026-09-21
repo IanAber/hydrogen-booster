@@ -53,12 +53,11 @@
     border-radius: 6px; color: var(--text); font-size: 14px;
   }
   #canChannelRows td, #tempChannelRows td, #relayChannelRows td, #digitalInputRows td { padding: 4px 4px; }
-  #canChannelRows input[type=number], #relayChannelRows input[type=number] { padding: 5px 6px; font-size: 13px; }
+  #canChannelRows input[type=number] { padding: 5px 6px; font-size: 13px; }
   #canChannelRows input[type=checkbox], #tempChannelRows input[type=checkbox], #relayChannelRows input[type=checkbox], #digitalInputRows input[type=checkbox] {
     width: 16px; height: 16px; accent-color: var(--accent);
   }
   #tempChannelRows select, #relayChannelRows select, #digitalInputRows select { padding: 5px 6px; font-size: 13px; }
-  #relayChannelRows input[type=number] { width: 80px; }
   .reading-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
   .reading-row:last-child { border-bottom: none; }
   .reading-row .ch-name { width: 150px; font-size: 13px; color: var(--text); font-weight: 600; }
@@ -184,7 +183,7 @@
       <div class="row2">
         <div class="field"><label><span data-i18n="admin_spike_window">Spike detection window</span><span class="unit">ms</span></label>
           <input type="number" id="s1window" min="0" step="10"></div>
-        <div class="field"><label><span data-i18n="admin_pulse_duration">Pulse valve duration</span><span class="unit">ms</span></label>
+        <div class="field"><label><span data-i18n="admin_reverse_delay">Reverse delay</span><span class="unit">ms</span></label>
           <input type="number" id="s1pulse" min="0" step="10"></div>
       </div>
     </div>
@@ -203,7 +202,7 @@
       <div class="row2">
         <div class="field"><label><span data-i18n="admin_spike_window">Spike detection window</span><span class="unit">ms</span></label>
           <input type="number" id="s2window" min="0" step="10"></div>
-        <div class="field"><label><span data-i18n="admin_pulse_duration">Pulse valve duration</span><span class="unit">ms</span></label>
+        <div class="field"><label><span data-i18n="admin_reverse_delay">Reverse delay</span><span class="unit">ms</span></label>
           <input type="number" id="s2pulse" min="0" step="10"></div>
       </div>
     </div>
@@ -216,12 +215,8 @@
         <input type="number" id="maxH2" min="0" step="1"></div>
       <div class="field"><label><span data-i18n="admin_max_temperature">Max temperature</span><span class="unit">&deg;C</span></label>
         <input type="number" id="maxTemp" min="0" step="1"></div>
-      <div class="row2">
-        <div class="field"><label><span data-i18n="admin_sensor_max_age">Sensor max age</span><span class="unit">ms</span></label>
-          <input type="number" id="sensorAge" min="0" step="100"></div>
-        <div class="field"><label><span data-i18n="admin_max_sync_lead">Max sync stroke lead</span><span class="unit">strokes</span></label>
-          <input type="number" id="syncLead" min="1" step="1"></div>
-      </div>
+      <div class="field"><label><span data-i18n="admin_sensor_max_age">Sensor max age</span><span class="unit">ms</span></label>
+        <input type="number" id="sensorAge" min="0" step="100"></div>
     </div>
 
     <div class="card">
@@ -236,6 +231,8 @@
       </div>
       <div class="field"><label><span data-i18n="admin_vent_duration">Vent duration (700 bar completion)</span><span class="unit">ms</span></label>
         <input type="number" id="ventDur" min="0" step="100"></div>
+      <div class="field"><label><span data-i18n="admin_homing_duration">Homing duration (startup)</span><span class="unit">ms</span></label>
+        <input type="number" id="homingDur" min="0" step="100"></div>
       <div class="field"><label><span data-i18n="admin_poll_period">Control loop poll period</span><span class="unit">ms</span></label>
         <input type="number" id="pollPeriod" min="10" step="10"></div>
     </div>
@@ -336,7 +333,7 @@
           <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
           <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
           <th style="padding:6px 4px;" data-i18n="admin_valve">Valve</th>
-          <th style="padding:6px 4px;" data-i18n="admin_port">Port (0-15)</th>
+          <th style="padding:6px 4px;" data-i18n="admin_port">Relay</th>
         </tr>
       </thead>
       <tbody id="relayChannelRows"></tbody>
@@ -362,7 +359,7 @@
           <th style="padding:6px 4px;" data-i18n="admin_ch">Ch</th>
           <th style="padding:6px 4px;" data-i18n="admin_enabled">Enabled</th>
           <th style="padding:6px 4px;" data-i18n="admin_assigned_to">Assigned to</th>
-          <th style="padding:6px 4px;" data-i18n="admin_port_gpio0">Line</th>
+          <th style="padding:6px 4px;" data-i18n="admin_port_gpio0">Connector</th>
         </tr>
       </thead>
       <tbody id="digitalInputRows"></tbody>
@@ -471,6 +468,18 @@ function valveOptions() {
   ];
 }
 
+// Relay ports are the MCP23017 expander's own 0-15 pin numbering, but
+// operators think in terms of the board's silkscreened "Relay-N"
+// labels (Relay-1 = port 0, ... Relay-16 = port 15) - a dropdown of
+// those labels is shown instead of the raw port number, matching the
+// digital inputs' "Input-N" connector labels.
+const RELAY_PORTS = Array.from({ length: 16 }, (_, port) => ({ port, label: 'Relay-' + (port + 1) }));
+
+function relayPortLabel(port) {
+  const entry = RELAY_PORTS.find(p => p.port === port);
+  return entry ? entry.label : String(port);
+}
+
 function buildRelayChannelRows(channels) {
   const tbody = document.getElementById('relayChannelRows');
   tbody.innerHTML = '';
@@ -481,12 +490,15 @@ function buildRelayChannelRows(channels) {
     const options = valveOptions().map(o =>
       `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
     ).join('');
+    const portOptions = RELAY_PORTS.map(p =>
+      `<option value="${p.port}" ${p.port === ch.port ? 'selected' : ''}>${p.label}</option>`
+    ).join('');
 
     tr.innerHTML = `
       <td>${i}</td>
       <td><input type="checkbox" id="relayCh${i}en" ${ch.enabled ? 'checked' : ''}></td>
       <td><select id="relayCh${i}assigned">${options}</select></td>
-      <td><input type="number" id="relayCh${i}port" min="0" max="15" step="1" value="${ch.port}"></td>
+      <td><select id="relayCh${i}port">${portOptions}</select></td>
     `;
     tbody.appendChild(tr);
   });
@@ -507,8 +519,24 @@ function readRelayChannelRows() {
 // The digital inputs are wired to a hardware-restricted set of
 // gpiochip0 lines (unlike the relay outputs' free 0-15 range) - a
 // dropdown restricted to exactly these values prevents picking an
-// unusable line rather than catching it only at Apply time.
-const DIGITAL_INPUT_PORTS = [2, 3, 5, 6, 7, 12, 13];
+// unusable line rather than catching it only at Apply time. Operators
+// think in terms of the board's silkscreened connector numbers, not
+// GPIO line numbers, so each one is shown as "Input-N" - the value
+// sent to the backend is still the underlying GPIO line number.
+const DIGITAL_INPUT_PORTS = [
+  { port: 2, label: 'Input-1' },
+  { port: 3, label: 'Input-2' },
+  { port: 5, label: 'Input-3' },
+  { port: 6, label: 'Input-4' },
+  { port: 12, label: 'Input-6' },
+  { port: 13, label: 'Input-7' },
+  { port: 16, label: 'Input-8' },
+];
+
+function digitalInputPortLabel(port) {
+  const entry = DIGITAL_INPUT_PORTS.find(p => p.port === port);
+  return entry ? entry.label : String(port);
+}
 
 function digitalInputOptions() {
   return [
@@ -530,7 +558,7 @@ function buildDigitalInputRows(channels) {
       `<option value="${o.value}" ${o.value === (ch.assigned || '') ? 'selected' : ''}>${o.label}</option>`
     ).join('');
     const portOptions = DIGITAL_INPUT_PORTS.map(p =>
-      `<option value="${p}" ${p === ch.port ? 'selected' : ''}>${p}</option>`
+      `<option value="${p.port}" ${p.port === ch.port ? 'selected' : ''}>${p.label}</option>`
     ).join('');
 
     tr.innerHTML = `
@@ -615,25 +643,25 @@ async function load() {
     setv('s1max', c.stage1.maxStrokeTimeMs);
     setv('s1delta', c.stage1.spikeDeltaBar);
     setv('s1window', c.stage1.spikeWindowMs);
-    setv('s1pulse', c.stage1.pulseDurationMs);
+    setv('s1pulse', c.stage1.reverseDelayMs);
 
     document.getElementById('s2name').textContent = c.stage2.name;
     setv('s2min', c.stage2.minStrokeTimeMs);
     setv('s2max', c.stage2.maxStrokeTimeMs);
     setv('s2delta', c.stage2.spikeDeltaBar);
     setv('s2window', c.stage2.spikeWindowMs);
-    setv('s2pulse', c.stage2.pulseDurationMs);
+    setv('s2pulse', c.stage2.reverseDelayMs);
 
     setv('maxHyd', c.safety.maxHydraulicPressureBar);
     setv('maxH2', c.safety.maxHydrogenPressureBar);
     setv('maxTemp', c.safety.maxTempC);
     setv('sensorAge', c.safety.sensorMaxAgeMs);
-    setv('syncLead', c.safety.maxSyncStrokeLead);
 
     setv('tankVol', c.tank.volumeLitres);
     setv('tankP', c.tank.nominalPressureBar);
     setv('tankT', c.tank.nominalTempC);
     setv('ventDur', c.vent.durationMs);
+    setv('homingDur', c.homing.durationMs);
     setv('pollPeriod', c.pollPeriodMs);
 
     setv('canIface', c.canModule.interface);
@@ -698,20 +726,20 @@ async function apply(persist) {
       name: document.getElementById('s1name').textContent,
       minStrokeTimeMs: int('s1min'), maxStrokeTimeMs: int('s1max'),
       spikeDeltaBar: num('s1delta'), spikeWindowMs: int('s1window'),
-      pulseDurationMs: int('s1pulse'),
+      reverseDelayMs: int('s1pulse'),
     },
     stage2: {
       name: document.getElementById('s2name').textContent,
       minStrokeTimeMs: int('s2min'), maxStrokeTimeMs: int('s2max'),
       spikeDeltaBar: num('s2delta'), spikeWindowMs: int('s2window'),
-      pulseDurationMs: int('s2pulse'),
+      reverseDelayMs: int('s2pulse'),
     },
+    homing: { durationMs: int('homingDur') },
     safety: {
       maxHydraulicPressureBar: num('maxHyd'),
       maxHydrogenPressureBar: num('maxH2'),
       maxTempC: num('maxTemp'),
       sensorMaxAgeMs: int('sensorAge'),
-      maxSyncStrokeLead: int('syncLead'),
     },
     tank: {
       volumeLitres: num('tankVol'),
@@ -1020,7 +1048,7 @@ async function pollDigitalStatus() {
       if (st.liveEnabled) {
         return `<div class="reading-row">
           <div class="ch-name">${c.assigned}</div>
-          <div class="ch-raw">${t('admin_gpio0_line')} ${c.port}</div>
+          <div class="ch-raw">${digitalInputPortLabel(c.port)}</div>
           <div class="ch-bar">${statusHtml}</div>
         </div>`;
       }
