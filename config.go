@@ -18,10 +18,17 @@ type StageConfig struct {
 	HydPressureSensor SensorInput
 
 	MinStrokeTime time.Duration // ignore spike detection until this long into the stroke (debounce)
-	MaxStrokeTime time.Duration // hard timeout, ends the stroke regardless of pressure
+	MaxStrokeTime time.Duration // hard timeout, ends the stroke regardless of pressure - independent of PressureFilterSamples/PressureBlankTime below, so a filtering misconfiguration can never mask it
 	SpikeDeltaBar float64       // pressure rise over SpikeWindow that counts as "end of stroke"
 	SpikeWindow   time.Duration
 	ReverseDelay  time.Duration // gap between commanding the new direction and re-closing the relief valve, letting the direction valve mechanically settle
+
+	// PressureFilterSamples is a median filter window (in samples) run
+	// over this circuit's own raw pressure readings before spike
+	// detection sees them - rejects short noise bursts (e.g. from valve
+	// switching) without the lag a moving average would add. 1 (the
+	// default) disables filtering entirely.
+	PressureFilterSamples int
 }
 
 // HomingConfig controls the startup sequence that gets both cylinders
@@ -202,11 +209,19 @@ type Config struct {
 	// one of the codes in ValidLanguages (io.go). Editable from the
 	// admin screen; does not affect anything on the backend besides
 	// this one setting being served back to the pages.
-	Language           string
-	PollPeriod         time.Duration
-	Stage1             StageConfig
-	Stage2             StageConfig
-	Homing             HomingConfig
+	Language   string
+	PollPeriod time.Duration
+	Stage1     StageConfig
+	Stage2     StageConfig
+	Homing     HomingConfig
+	// PressureBlankTime is a global (not per-circuit) quiet period:
+	// spike detection ignores pressure samples on BOTH circuits for
+	// this long after any relay switches on either one - guards against
+	// cross-talk (the other circuit's valve switching disturbing this
+	// circuit's reading) that a per-circuit debounce like
+	// StageConfig.MinStrokeTime can't catch, since it isn't anchored to
+	// this circuit's own phase timing. 0 (the default) disables it.
+	PressureBlankTime  time.Duration
 	Safety             SafetyConfig
 	Tank               TankConfig
 	Vent               VentConfig
@@ -228,23 +243,26 @@ func DefaultConfig() Config {
 		PollPeriod: 100 * time.Millisecond,
 		Stage1: StageConfig{
 			Name: "Stage 1 (A/B)", DirRelay: Valve1A, ReliefRelay: Valve1B,
-			HydPressureSensor: Hyd1Pressure,
-			MinStrokeTime:     300 * time.Millisecond,
-			MaxStrokeTime:     6 * time.Second,
-			SpikeDeltaBar:     15,
-			SpikeWindow:       250 * time.Millisecond,
-			ReverseDelay:      500 * time.Millisecond,
+			HydPressureSensor:     Hyd1Pressure,
+			MinStrokeTime:         300 * time.Millisecond,
+			MaxStrokeTime:         6 * time.Second,
+			SpikeDeltaBar:         15,
+			SpikeWindow:           250 * time.Millisecond,
+			ReverseDelay:          500 * time.Millisecond,
+			PressureFilterSamples: 1,
 		},
 		Stage2: StageConfig{
 			Name: "Stage 2 (C/D)", DirRelay: Valve2A, ReliefRelay: Valve2B,
-			HydPressureSensor: Hyd2Pressure,
-			MinStrokeTime:     300 * time.Millisecond,
-			MaxStrokeTime:     6 * time.Second,
-			SpikeDeltaBar:     15,
-			SpikeWindow:       250 * time.Millisecond,
-			ReverseDelay:      500 * time.Millisecond,
+			HydPressureSensor:     Hyd2Pressure,
+			MinStrokeTime:         300 * time.Millisecond,
+			MaxStrokeTime:         6 * time.Second,
+			SpikeDeltaBar:         15,
+			SpikeWindow:           250 * time.Millisecond,
+			ReverseDelay:          500 * time.Millisecond,
+			PressureFilterSamples: 1,
 		},
-		Homing: HomingConfig{Duration: 8 * time.Second},
+		Homing:            HomingConfig{Duration: 8 * time.Second},
+		PressureBlankTime: 0,
 		Safety: SafetyConfig{
 			MaxHydraulicPressureBar: 250,
 			MaxHydrogenPressureBar:  750,

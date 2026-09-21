@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -38,8 +39,23 @@ type circuit struct {
 	phase       circuitPhase
 	phaseStart  time.Time
 	history     []pSample
+	filterBuf   []float64 // raw-sample ring buffer for the median filter
 	strokeCount uint64
 	lastFault   string
+}
+
+// median returns the middle value of vals (average of the two middle
+// values for an even count). vals is copied before sorting, so the
+// caller's slice order is left untouched.
+func median(vals []float64) float64 {
+	sorted := make([]float64, len(vals))
+	copy(sorted, vals)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
 
 func (c *circuit) cfg(live *LiveConfig) StageConfig {
@@ -80,6 +96,7 @@ type Stages struct {
 	mu          sync.Mutex
 	running     bool
 	homingStart time.Time
+	lastSwitch  time.Time // last time any relay changed on either circuit; anchors PressureBlankTime
 	c1, c2      circuit
 
 	// OnReversal fires (outside the lock) once both circuits reverse
@@ -102,11 +119,13 @@ func (s *Stages) Start() {
 	s.mu.Lock()
 	s.running = true
 	s.homingStart = now
+	s.lastSwitch = now
 	for _, c := range []*circuit{&s.c1, &s.c2} {
 		c.dir = DirDown
 		c.phase = phaseHoming
 		c.phaseStart = now
 		c.history = nil
+		c.filterBuf = nil
 		c.lastFault = ""
 	}
 	s.mu.Unlock()
@@ -169,6 +188,7 @@ func (s *Stages) tickHoming(now time.Time) {
 	}
 	s.c1.phase, s.c2.phase = phaseDriving, phaseDriving
 	s.c1.phaseStart, s.c2.phaseStart = now, now
+	s.lastSwitch = now
 	s.mu.Unlock()
 
 	_ = s.io.SetRelay(s.c1.cfg(s.live).ReliefRelay, false)
@@ -188,7 +208,7 @@ func (s *Stages) tickDriving(now time.Time, c *circuit) {
 	elapsed := now.Sub(c.phaseStart)
 	s.mu.Unlock()
 
-	p, err := s.io.ReadPressureBar(cfg.HydPressureSensor)
+	raw, err := s.io.ReadPressureBar(cfg.HydPressureSensor)
 	if err != nil {
 		s.mu.Lock()
 		c.lastFault = "hydraulic pressure sensor fault: " + err.Error()
@@ -197,6 +217,14 @@ func (s *Stages) tickDriving(now time.Time, c *circuit) {
 	}
 
 	s.mu.Lock()
+	p := raw
+	if cfg.PressureFilterSamples > 1 {
+		c.filterBuf = append(c.filterBuf, raw)
+		if len(c.filterBuf) > cfg.PressureFilterSamples {
+			c.filterBuf = c.filterBuf[len(c.filterBuf)-cfg.PressureFilterSamples:]
+		}
+		p = median(c.filterBuf)
+	}
 	c.history = append(c.history, pSample{now, p})
 	cut := 0
 	for i, h := range c.history {
@@ -207,7 +235,7 @@ func (s *Stages) tickDriving(now time.Time, c *circuit) {
 	}
 	c.history = c.history[cut:]
 	var spike bool
-	if len(c.history) > 1 && elapsed >= cfg.MinStrokeTime {
+	if len(c.history) > 1 && elapsed >= cfg.MinStrokeTime && now.Sub(s.lastSwitch) >= s.live.Snapshot().PressureBlankTime {
 		delta := p - c.history[0].p
 		spike = delta >= cfg.SpikeDeltaBar
 	}
@@ -216,6 +244,7 @@ func (s *Stages) tickDriving(now time.Time, c *circuit) {
 	if reachedBarrier {
 		c.phase = phaseAtBarrier
 		c.phaseStart = now
+		s.lastSwitch = now
 	}
 	s.mu.Unlock()
 
@@ -241,6 +270,7 @@ func (s *Stages) tickBarrier(now time.Time) {
 	s.c2.strokeCount++
 	s.c1.phase, s.c2.phase = phaseReversing, phaseReversing
 	s.c1.phaseStart, s.c2.phaseStart = now, now
+	s.lastSwitch = now
 	strokeCount := s.c1.strokeCount
 	onReversal := s.OnReversal
 	s.mu.Unlock()
@@ -268,6 +298,8 @@ func (s *Stages) tickReversing(now time.Time, c *circuit) {
 		c.phase = phaseDriving
 		c.phaseStart = now
 		c.history = nil
+		c.filterBuf = nil
+		s.lastSwitch = now
 	}
 	s.mu.Unlock()
 

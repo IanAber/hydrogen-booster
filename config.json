@@ -6,7 +6,8 @@
     "maxStrokeTimeMs": 6000,
     "spikeDeltaBar": 15,
     "spikeWindowMs": 250,
-    "reverseDelayMs": 500
+    "reverseDelayMs": 500,
+    "pressureFilterSamples": 1
   },
   "stage2": {
     "name": "Stage 2 (C/D)",
@@ -14,11 +15,13 @@
     "maxStrokeTimeMs": 6000,
     "spikeDeltaBar": 15,
     "spikeWindowMs": 250,
-    "reverseDelayMs": 500
+    "reverseDelayMs": 500,
+    "pressureFilterSamples": 1
   },
   "homing": {
     "durationMs": 8000
   },
+  "pressureBlankTimeMs": 0,
   "safety": {
     "maxHydraulicPressureBar": 25,
     "maxHydrogenPressureBar": 750,

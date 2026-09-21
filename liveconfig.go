@@ -46,12 +46,13 @@ func (l *LiveConfig) Set(c Config) {
 // ---------------------------------------------------------------------
 
 type StageConfigDTO struct {
-	Name            string  `json:"name"`
-	MinStrokeTimeMs int     `json:"minStrokeTimeMs"`
-	MaxStrokeTimeMs int     `json:"maxStrokeTimeMs"`
-	SpikeDeltaBar   float64 `json:"spikeDeltaBar"`
-	SpikeWindowMs   int     `json:"spikeWindowMs"`
-	ReverseDelayMs  int     `json:"reverseDelayMs"`
+	Name                  string  `json:"name"`
+	MinStrokeTimeMs       int     `json:"minStrokeTimeMs"`
+	MaxStrokeTimeMs       int     `json:"maxStrokeTimeMs"`
+	SpikeDeltaBar         float64 `json:"spikeDeltaBar"`
+	SpikeWindowMs         int     `json:"spikeWindowMs"`
+	ReverseDelayMs        int     `json:"reverseDelayMs"`
+	PressureFilterSamples int     `json:"pressureFilterSamples"`
 }
 
 type SafetyConfigDTO struct {
@@ -132,29 +133,31 @@ type DigitalInputModuleConfigDTO struct {
 }
 
 type ConfigDTO struct {
-	SystemName         string                      `json:"systemName"`
-	Language           string                      `json:"language"`
-	PollPeriodMs       int                         `json:"pollPeriodMs"`
-	Stage1             StageConfigDTO              `json:"stage1"`
-	Stage2             StageConfigDTO              `json:"stage2"`
-	Homing             HomingConfigDTO             `json:"homing"`
-	Safety             SafetyConfigDTO             `json:"safety"`
-	Tank               TankConfigDTO               `json:"tank"`
-	Vent               VentConfigDTO               `json:"vent"`
-	CanModule          CanModuleConfigDTO          `json:"canModule"`
-	TempModule         TempModuleConfigDTO         `json:"tempModule"`
-	RelayModule        RelayModuleConfigDTO        `json:"relayModule"`
-	DigitalInputModule DigitalInputModuleConfigDTO `json:"digitalInputModule"`
+	SystemName          string                      `json:"systemName"`
+	Language            string                      `json:"language"`
+	PollPeriodMs        int                         `json:"pollPeriodMs"`
+	Stage1              StageConfigDTO              `json:"stage1"`
+	Stage2              StageConfigDTO              `json:"stage2"`
+	Homing              HomingConfigDTO             `json:"homing"`
+	PressureBlankTimeMs int                         `json:"pressureBlankTimeMs"`
+	Safety              SafetyConfigDTO             `json:"safety"`
+	Tank                TankConfigDTO               `json:"tank"`
+	Vent                VentConfigDTO               `json:"vent"`
+	CanModule           CanModuleConfigDTO          `json:"canModule"`
+	TempModule          TempModuleConfigDTO         `json:"tempModule"`
+	RelayModule         RelayModuleConfigDTO        `json:"relayModule"`
+	DigitalInputModule  DigitalInputModuleConfigDTO `json:"digitalInputModule"`
 }
 
 func stageToDTO(s StageConfig) StageConfigDTO {
 	return StageConfigDTO{
-		Name:            s.Name,
-		MinStrokeTimeMs: int(s.MinStrokeTime / time.Millisecond),
-		MaxStrokeTimeMs: int(s.MaxStrokeTime / time.Millisecond),
-		SpikeDeltaBar:   s.SpikeDeltaBar,
-		SpikeWindowMs:   int(s.SpikeWindow / time.Millisecond),
-		ReverseDelayMs:  int(s.ReverseDelay / time.Millisecond),
+		Name:                  s.Name,
+		MinStrokeTimeMs:       int(s.MinStrokeTime / time.Millisecond),
+		MaxStrokeTimeMs:       int(s.MaxStrokeTime / time.Millisecond),
+		SpikeDeltaBar:         s.SpikeDeltaBar,
+		SpikeWindowMs:         int(s.SpikeWindow / time.Millisecond),
+		ReverseDelayMs:        int(s.ReverseDelay / time.Millisecond),
+		PressureFilterSamples: s.PressureFilterSamples,
 	}
 }
 
@@ -244,12 +247,13 @@ func digitalInputModuleToDTO(c DigitalInputModuleConfig) DigitalInputModuleConfi
 // screen works with.
 func ToDTO(c Config) ConfigDTO {
 	return ConfigDTO{
-		SystemName:   c.SystemName,
-		Language:     c.Language,
-		PollPeriodMs: int(c.PollPeriod / time.Millisecond),
-		Stage1:       stageToDTO(c.Stage1),
-		Stage2:       stageToDTO(c.Stage2),
-		Homing:       HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
+		SystemName:          c.SystemName,
+		Language:            c.Language,
+		PollPeriodMs:        int(c.PollPeriod / time.Millisecond),
+		Stage1:              stageToDTO(c.Stage1),
+		Stage2:              stageToDTO(c.Stage2),
+		Homing:              HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
+		PressureBlankTimeMs: int(c.PressureBlankTime / time.Millisecond),
 		Safety: SafetyConfigDTO{
 			MaxHydraulicPressureBar: c.Safety.MaxHydraulicPressureBar,
 			MaxHydrogenPressureBar:  c.Safety.MaxHydrogenPressureBar,
@@ -277,6 +281,7 @@ func applyStage(base StageConfig, dto StageConfigDTO) StageConfig {
 	base.SpikeDeltaBar = dto.SpikeDeltaBar
 	base.SpikeWindow = time.Duration(dto.SpikeWindowMs) * time.Millisecond
 	base.ReverseDelay = time.Duration(dto.ReverseDelayMs) * time.Millisecond
+	base.PressureFilterSamples = dto.PressureFilterSamples
 	return base
 }
 
@@ -295,6 +300,9 @@ func validateStageDTO(label string, s StageConfigDTO) error {
 	}
 	if s.ReverseDelayMs <= 0 {
 		return fmt.Errorf("%s: reverse delay must be greater than zero", label)
+	}
+	if s.PressureFilterSamples < 1 {
+		return fmt.Errorf("%s: pressure filter samples must be at least 1 (1 = disabled)", label)
 	}
 	return nil
 }
@@ -327,6 +335,9 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	if dto.Homing.DurationMs < 0 {
 		return base, fmt.Errorf("homing duration cannot be negative")
 	}
+	if dto.PressureBlankTimeMs < 0 {
+		return base, fmt.Errorf("pressure blank time cannot be negative")
+	}
 
 	out := base
 	// A blank name is treated as "no change" rather than wiped to empty -
@@ -346,6 +357,7 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	out.Stage1 = applyStage(base.Stage1, dto.Stage1)
 	out.Stage2 = applyStage(base.Stage2, dto.Stage2)
 	out.Homing.Duration = time.Duration(dto.Homing.DurationMs) * time.Millisecond
+	out.PressureBlankTime = time.Duration(dto.PressureBlankTimeMs) * time.Millisecond
 	out.Safety.MaxHydraulicPressureBar = dto.Safety.MaxHydraulicPressureBar
 	out.Safety.MaxHydrogenPressureBar = dto.Safety.MaxHydrogenPressureBar
 	out.Safety.MaxTempC = dto.Safety.MaxTempC

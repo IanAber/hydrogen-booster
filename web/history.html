@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster History</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header nav { display: flex; align-items: center; gap: 16px; }
+  header nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+  header nav a:hover { color: var(--text); }
+  main { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; }
+  .controls-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field input[type="datetime-local"] {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 7px 10px; font-size: 13px;
+  }
+  .quick-ranges { display: flex; gap: 6px; }
+  button.range-btn, button.load-btn {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 7px 12px; font-size: 13px; cursor: pointer;
+  }
+  button.range-btn:hover, button.load-btn:hover { border-color: var(--accent); }
+  button.load-btn { background: var(--accent); border-color: var(--accent); color: #08131c; font-weight: 600; }
+  .status-msg { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .status-msg.error { color: var(--bad); }
+  .truncated-note {
+    display: none; font-size: 13px; color: var(--warn); margin-top: 10px;
+    background: rgba(242,181,61,.1); border: 1px solid var(--warn); border-radius: 6px; padding: 8px 12px;
+  }
+  .legend-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); cursor: pointer; user-select: none; }
+  .legend-item .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap canvas { width: 100%; display: block; cursor: crosshair; }
+  /* Fixed CSS heights, independent of the canvas width/height attributes
+     - sizeCanvas() below sets those attributes (the drawing-buffer size)
+     on every redraw, and without a CSS height pinning the box
+     separately, that write would keep growing the element's own layout
+     height each time (no CSS height means the box follows the
+     attribute, which the same code just changed). #valveCanvas is the
+     one exception: its height is intentionally data-driven (one lane
+     per visible channel), set as an inline style each redraw instead. */
+  #pressureCanvas { height: 220px; }
+  #tempCanvas { height: 180px; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap;
+    display: none; z-index: 10;
+  }
+  .chart-tooltip .row { display: flex; align-items: center; gap: 6px; }
+  .chart-tooltip .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="history_page_title">History</h1>
+  <nav>
+    <a href="/operator.html">&larr; <span data-i18n="nav_dashboard">Dashboard</span></a>
+    <a href="/diagnostics.html" data-i18n="nav_diagnostics">Diagnostics</a>
+    <a href="/admin.html" data-i18n="nav_admin">Admin / Config</a>
+    <a href="/docs.html" data-i18n="nav_api_docs">API Docs</a>
+  </nav>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 data-i18n="history_page_title">History</h2>
+    <div class="controls-row">
+      <div class="field">
+        <label data-i18n="history_from">From</label>
+        <input type="datetime-local" id="fromInput">
+      </div>
+      <div class="field">
+        <label data-i18n="history_to">To</label>
+        <input type="datetime-local" id="toInput">
+      </div>
+      <div class="quick-ranges">
+        <button type="button" class="range-btn" data-ms="3600000" data-i18n="history_range_1h">1h</button>
+        <button type="button" class="range-btn" data-ms="21600000" data-i18n="history_range_6h">6h</button>
+        <button type="button" class="range-btn" data-ms="86400000" data-i18n="history_range_24h">24h</button>
+        <button type="button" class="range-btn" data-ms="604800000" data-i18n="history_range_7d">7d</button>
+        <button type="button" class="range-btn" data-ms="2592000000" data-i18n="history_range_30d">30d</button>
+      </div>
+      <button type="button" class="load-btn" id="loadBtn" data-i18n="history_load">Load</button>
+    </div>
+    <div class="status-msg" id="statusMsg"></div>
+    <div class="truncated-note" id="truncatedNote" data-i18n="history_truncated">Data truncated to the query limit - narrow the time range for full detail.</div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="history_panel_pressure">Pressure</h2>
+    <div class="legend-row" id="pressureLegend"></div>
+    <div class="chart-wrap">
+      <canvas id="pressureCanvas" height="220"></canvas>
+      <div class="chart-tooltip" id="pressureTooltip"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="history_panel_temperature">Temperature</h2>
+    <div class="legend-row" id="tempLegend"></div>
+    <div class="chart-wrap">
+      <canvas id="tempCanvas" height="180"></canvas>
+      <div class="chart-tooltip" id="tempTooltip"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="history_panel_valves">Valves & Relays</h2>
+    <div class="legend-row" id="valveLegend"></div>
+    <div class="chart-wrap">
+      <canvas id="valveCanvas"></canvas>
+      <div class="chart-tooltip" id="valveTooltip"></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ---------------------------------------------------------------------
+// Shared constants
+// ---------------------------------------------------------------------
+const COLOR_TEXT = '#e6edf2';
+const COLOR_MUTED = '#8b9aa5';
+const COLOR_GRID = '#2a3742';
+const PALETTE = ['#3aa0ff','#f2b53d','#35c26b','#ef4b4b','#b46cff','#3ad1c5',
+                  '#ff8a3d','#e0e64d','#6c8cff','#ff6cc9','#8bd346','#c9c9c9'];
+
+// PAD_LEFT is shared by every panel (even line panels, which don't
+// strictly need this much left margin for their y-axis labels) so a
+// given pixel column means the same instant in every panel - the
+// "same time axis" requirement is a pixel-exact guarantee, not just an
+// approximate visual alignment.
+const PAD_LEFT = 140, PAD_RIGHT = 16, PAD_TOP = 12, PAD_BOTTOM = 26;
+const LANE_HEIGHT = 26;
+const MAX_LIMIT = 100000;
+
+// ---------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------
+let pressureChannels = [], tempChannels = [], valveChannelsList = [];
+const dataCache = { readings: {}, valves: {} };
+const visible = {};
+let rangeFrom = null, rangeTo = null;
+let hover = { panel: null, x: null };
+
+// ---------------------------------------------------------------------
+// Channel display names - reuses the same label mapping diagnostics.html
+// uses for valves/digital inputs; pressure/temp channels are shown by
+// their raw channel name (no shorter display-name mapping exists for
+// them outside diagnostics.html's grouped cards).
+// ---------------------------------------------------------------------
+function valveLabelKey(name) {
+  switch (name) {
+    case 'Valve1A(dir)': return 'diag_valve_s1_dir';
+    case 'Valve1B(pulse)': return 'diag_valve_s1_pulse';
+    case 'Valve2A(dir)': return 'diag_valve_s2_dir';
+    case 'Valve2B(pulse)': return 'diag_valve_s2_pulse';
+    case 'VentValve': return 'diag_valve_vent';
+    case 'Pump1': return 'diag_valve_pump1';
+    case 'Pump2': return 'diag_valve_pump2';
+    default: return null;
+  }
+}
+function digitalInputLabelKey(name) {
+  switch (name) {
+    case 'HydraulicOilLevel': return 'diag_input_hydraulic_oil_level';
+    case 'Motor1Powered': return 'diag_input_motor1_powered';
+    case 'Motor2Powered': return 'diag_input_motor2_powered';
+    default: return null;
+  }
+}
+function valveDisplayName(name) {
+  const key = valveLabelKey(name) || digitalInputLabelKey(name);
+  return key ? t(key) : name;
+}
+
+function colorFor(list, name) {
+  const idx = list.indexOf(name);
+  return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
+}
+
+// ---------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------
+let channelsLoaded = false;
+async function loadChannelsOnce() {
+  if (channelsLoaded) return;
+  const res = await fetch('/api/history/channels');
+  const data = await res.json();
+  const readings = data.readings || [];
+  pressureChannels = readings.filter(n => !n.includes('Temp'));
+  tempChannels = readings.filter(n => n.includes('Temp'));
+  valveChannelsList = data.valves || [];
+  [...pressureChannels, ...tempChannels, ...valveChannelsList].forEach(n => {
+    if (!(n in visible)) visible[n] = true;
+  });
+  channelsLoaded = true;
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('statusMsg');
+  el.textContent = msg || '';
+  el.className = 'status-msg' + (isError ? ' error' : '');
+}
+
+async function loadRange() {
+  await loadChannelsOnce();
+  const fromVal = document.getElementById('fromInput').value;
+  const toVal = document.getElementById('toInput').value;
+  const from = new Date(fromVal);
+  const to = new Date(toVal);
+  if (!fromVal || !toVal || isNaN(from.getTime()) || isNaN(to.getTime()) || from >= to) {
+    setStatus(t('history_error'), true);
+    return;
+  }
+  rangeFrom = from;
+  rangeTo = to;
+  setStatus(t('history_loading'));
+  document.getElementById('truncatedNote').style.display = 'none';
+
+  const qs = (ch) => 'channel=' + encodeURIComponent(ch) +
+    '&from=' + encodeURIComponent(from.toISOString()) +
+    '&to=' + encodeURIComponent(to.toISOString()) +
+    '&limit=' + MAX_LIMIT;
+
+  try {
+    const readingChannels = [...pressureChannels, ...tempChannels];
+    const [readingResults, valveResults] = await Promise.all([
+      Promise.all(readingChannels.map(ch => fetch('/api/history/readings?' + qs(ch)).then(r => r.json()))),
+      Promise.all(valveChannelsList.map(ch => fetch('/api/history/valves?' + qs(ch)).then(r => r.json()))),
+    ]);
+
+    let truncated = false;
+    dataCache.readings = {};
+    readingResults.forEach(r => {
+      const pts = r.points || [];
+      dataCache.readings[r.channel] = pts;
+      if (pts.length >= MAX_LIMIT) truncated = true;
+    });
+    dataCache.valves = {};
+    valveResults.forEach(r => {
+      dataCache.valves[r.channel] = r.points || [];
+      if ((r.points || []).length >= MAX_LIMIT) truncated = true;
+    });
+
+    document.getElementById('truncatedNote').style.display = truncated ? 'block' : 'none';
+    setStatus('');
+    renderLegends();
+    redrawAll();
+  } catch (e) {
+    setStatus(t('history_error'), true);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Quick range buttons
+// ---------------------------------------------------------------------
+function toLocalInputValue(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function setQuickRange(ms) {
+  const to = new Date();
+  const from = new Date(to.getTime() - ms);
+  document.getElementById('fromInput').value = toLocalInputValue(from);
+  document.getElementById('toInput').value = toLocalInputValue(to);
+  loadRange();
+}
+
+// ---------------------------------------------------------------------
+// Legends / channel toggles
+// ---------------------------------------------------------------------
+function renderLegend(containerId, channels, colorList, displayName) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = channels.map(c => {
+    const color = colorFor(colorList, c);
+    const checked = visible[c] !== false ? 'checked' : '';
+    return `<label class="legend-item">
+      <input type="checkbox" data-channel="${c}" ${checked}>
+      <span class="swatch" style="background:${color}"></span>${displayName(c)}
+    </label>`;
+  }).join('');
+  el.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      visible[cb.dataset.channel] = cb.checked;
+      redrawAll();
+    });
+  });
+}
+
+function renderLegends() {
+  renderLegend('pressureLegend', pressureChannels, pressureChannels, c => c);
+  renderLegend('tempLegend', tempChannels, tempChannels, c => c);
+  renderLegend('valveLegend', valveChannelsList, valveChannelsList, valveDisplayName);
+}
+
+// ---------------------------------------------------------------------
+// Shared axis helpers
+// ---------------------------------------------------------------------
+function xForTime(ts, plotW) {
+  const t0 = rangeFrom.getTime(), t1 = rangeTo.getTime();
+  return PAD_LEFT + ((ts - t0) / (t1 - t0)) * plotW;
+}
+
+function timeForX(x, plotW) {
+  const t0 = rangeFrom.getTime(), t1 = rangeTo.getTime();
+  const frac = (x - PAD_LEFT) / plotW;
+  return t0 + frac * (t1 - t0);
+}
+
+function formatAxisTime(d) {
+  const spanMs = rangeTo.getTime() - rangeFrom.getTime();
+  if (spanMs > 2 * 24 * 3600 * 1000) {
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric' });
+  }
+  return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function drawTimeAxis(ctx, plotW, cssHeight) {
+  const tickCount = 6;
+  ctx.strokeStyle = COLOR_GRID;
+  ctx.fillStyle = COLOR_MUTED;
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= tickCount; i++) {
+    const frac = i / tickCount;
+    const x = PAD_LEFT + frac * plotW;
+    const ts = rangeFrom.getTime() + frac * (rangeTo.getTime() - rangeFrom.getTime());
+    ctx.beginPath();
+    ctx.moveTo(x, PAD_TOP);
+    ctx.lineTo(x, cssHeight - PAD_BOTTOM);
+    ctx.stroke();
+    const label = formatAxisTime(new Date(ts));
+    ctx.textAlign = i === tickCount ? 'right' : (i === 0 ? 'left' : 'center');
+    ctx.fillText(label, x, cssHeight - PAD_BOTTOM + 6);
+  }
+}
+
+function drawNoData(ctx, cssWidth, cssHeight) {
+  ctx.fillStyle = COLOR_MUTED;
+  ctx.font = '13px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(t('history_no_data'), cssWidth / 2, cssHeight / 2);
+}
+
+function sizeCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.clientWidth;
+  const cssHeight = canvas.clientHeight;
+  canvas.width = Math.max(1, Math.round(cssWidth * dpr));
+  canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, cssWidth, cssHeight };
+}
+
+// Binary search for the index of the point nearest targetTs in a
+// points array sorted ascending by ts (as every /api/history/*
+// response is).
+function nearestIndex(points, targetTs) {
+  if (!points.length) return -1;
+  let lo = 0, hi = points.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (new Date(points[mid].ts).getTime() < targetTs) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0) {
+    const prevDist = Math.abs(new Date(points[lo - 1].ts).getTime() - targetTs);
+    const curDist = Math.abs(new Date(points[lo].ts).getTime() - targetTs);
+    if (prevDist < curDist) return lo - 1;
+  }
+  return lo;
+}
+
+// ---------------------------------------------------------------------
+// Line panel (pressure / temperature)
+// ---------------------------------------------------------------------
+function drawLinePanel(canvasId, tooltipId, channels, colorList, unit, panelKey) {
+  const canvas = document.getElementById(canvasId);
+  const { ctx, cssWidth, cssHeight } = sizeCanvas(canvas);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  if (!rangeFrom || !rangeTo) return;
+
+  const plotW = cssWidth - PAD_LEFT - PAD_RIGHT;
+  const plotH = cssHeight - PAD_TOP - PAD_BOTTOM;
+  const visibleChannels = channels.filter(c => visible[c] && (dataCache.readings[c] || []).length);
+
+  if (!visibleChannels.length) {
+    drawNoData(ctx, cssWidth, cssHeight);
+    hideTooltip(tooltipId);
+    return;
+  }
+
+  let minV = Infinity, maxV = -Infinity;
+  visibleChannels.forEach(c => {
+    dataCache.readings[c].forEach(p => {
+      if (p.value < minV) minV = p.value;
+      if (p.value > maxV) maxV = p.value;
+    });
+  });
+  if (minV === maxV) { minV -= 1; maxV += 1; }
+  const margin = (maxV - minV) * 0.08;
+  minV -= margin; maxV += margin;
+
+  const yFor = (v) => PAD_TOP + (1 - (v - minV) / (maxV - minV)) * plotH;
+
+  // Horizontal gridlines + y-axis labels.
+  const yTicks = 4;
+  ctx.strokeStyle = COLOR_GRID;
+  ctx.fillStyle = COLOR_MUTED;
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= yTicks; i++) {
+    const v = minV + (i / yTicks) * (maxV - minV);
+    const y = yFor(v);
+    ctx.beginPath();
+    ctx.moveTo(PAD_LEFT, y);
+    ctx.lineTo(cssWidth - PAD_RIGHT, y);
+    ctx.stroke();
+    ctx.fillText(v.toFixed(1) + ' ' + unit, PAD_LEFT - 8, y);
+  }
+
+  drawTimeAxis(ctx, plotW, cssHeight);
+
+  visibleChannels.forEach(c => {
+    const pts = dataCache.readings[c];
+    ctx.strokeStyle = colorFor(colorList, c);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = xForTime(new Date(p.ts).getTime(), plotW);
+      const y = yFor(p.value);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  if (hover.panel === panelKey && hover.x !== null) {
+    drawCrosshairAndTooltip(ctx, tooltipId, canvas, plotW, cssHeight, visibleChannels, colorList, (c, ts) => {
+      const pts = dataCache.readings[c];
+      const idx = nearestIndex(pts, ts);
+      if (idx < 0) return null;
+      return pts[idx].value.toFixed(2) + ' ' + unit;
+    });
+  } else {
+    hideTooltip(tooltipId);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Valve/relay swimlane panel
+// ---------------------------------------------------------------------
+function buildSegments(points, rangeToDate) {
+  const segs = [];
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].state) {
+      const start = new Date(points[i].ts);
+      const end = (i + 1 < points.length) ? new Date(points[i + 1].ts) : rangeToDate;
+      segs.push([start, end]);
+    }
+  }
+  return segs;
+}
+
+function stateAt(points, ts) {
+  const idx = nearestIndex(points, ts);
+  if (idx < 0) return null;
+  // nearestIndex may return the closest point in EITHER direction; for
+  // an on/off state we want the last transition at-or-before ts.
+  const t = new Date(points[idx].ts).getTime();
+  const i = t <= ts ? idx : Math.max(0, idx - 1);
+  return points[i].state;
+}
+
+function drawValvePanel() {
+  const canvas = document.getElementById('valveCanvas');
+  const visibleChannels = valveChannelsList.filter(c => visible[c]);
+  canvas.style.height = Math.max(80, visibleChannels.length * LANE_HEIGHT + PAD_TOP + PAD_BOTTOM) + 'px';
+
+  const { ctx, cssWidth, cssHeight } = sizeCanvas(canvas);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  if (!rangeFrom || !rangeTo) return;
+
+  const plotW = cssWidth - PAD_LEFT - PAD_RIGHT;
+
+  if (!visibleChannels.length) {
+    drawNoData(ctx, cssWidth, cssHeight);
+    hideTooltip('valveTooltip');
+    return;
+  }
+
+  ctx.font = '12px -apple-system, sans-serif';
+  visibleChannels.forEach((c, i) => {
+    const y = PAD_TOP + i * LANE_HEIGHT;
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fillRect(PAD_LEFT, y, plotW, LANE_HEIGHT - 4);
+
+    ctx.fillStyle = COLOR_TEXT;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(valveDisplayName(c), PAD_LEFT - 8, y + (LANE_HEIGHT - 4) / 2);
+
+    const pts = dataCache.valves[c] || [];
+    const segs = buildSegments(pts, rangeTo);
+    ctx.fillStyle = colorFor(valveChannelsList, c);
+    segs.forEach(([s, e]) => {
+      const x0 = xForTime(Math.max(s.getTime(), rangeFrom.getTime()), plotW);
+      const x1 = xForTime(Math.min(e.getTime(), rangeTo.getTime()), plotW);
+      ctx.fillRect(x0, y + 2, Math.max(1, x1 - x0), LANE_HEIGHT - 8);
+    });
+  });
+
+  drawTimeAxis(ctx, plotW, cssHeight);
+
+  if (hover.panel === 'valve' && hover.x !== null) {
+    drawCrosshairAndTooltip(ctx, 'valveTooltip', canvas, plotW, cssHeight, visibleChannels, valveChannelsList, (c, ts) => {
+      const pts = dataCache.valves[c] || [];
+      const st = stateAt(pts, ts);
+      if (st === null) return null;
+      return st ? t('diag_energised') : t('diag_off');
+    });
+  } else {
+    hideTooltip('valveTooltip');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Hover crosshair + tooltip (shared by all panel types)
+// ---------------------------------------------------------------------
+function hideTooltip(tooltipId) {
+  document.getElementById(tooltipId).style.display = 'none';
+}
+
+function drawCrosshairAndTooltip(ctx, tooltipId, canvas, plotW, cssHeight, channels, colorList, valueFor) {
+  const x = hover.x;
+  if (x < PAD_LEFT || x > PAD_LEFT + plotW) {
+    hideTooltip(tooltipId);
+    return;
+  }
+  ctx.strokeStyle = COLOR_MUTED;
+  ctx.beginPath();
+  ctx.moveTo(x, PAD_TOP);
+  ctx.lineTo(x, cssHeight - PAD_BOTTOM);
+  ctx.stroke();
+
+  const ts = timeForX(x, plotW);
+  const rows = channels.map(c => {
+    const v = valueFor(c, ts);
+    if (v === null) return null;
+    return { c, v, color: colorFor(colorList, c) };
+  }).filter(Boolean);
+
+  const tooltip = document.getElementById(tooltipId);
+  if (!rows.length) { tooltip.style.display = 'none'; return; }
+  tooltip.innerHTML = `<div>${new Date(ts).toLocaleString()}</div>` + rows.map(r =>
+    `<div class="row"><span class="swatch" style="background:${r.color}"></span>${(colorList === valveChannelsList) ? valveDisplayName(r.c) : r.c}: <strong>${r.v}</strong></div>`
+  ).join('');
+  tooltip.style.display = 'block';
+  const canvasRect = canvas.getBoundingClientRect();
+  const wrapRect = canvas.parentElement.getBoundingClientRect();
+  let left = (canvasRect.left - wrapRect.left) + x + 12;
+  if (left + tooltip.offsetWidth > wrapRect.width) left = x - tooltip.offsetWidth - 12;
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = '8px';
+}
+
+function attachHover(canvasId, panelKey) {
+  const canvas = document.getElementById(canvasId);
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    hover = { panel: panelKey, x: e.clientX - rect.left };
+    redrawAll();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    hover = { panel: null, x: null };
+    redrawAll();
+  });
+}
+
+// ---------------------------------------------------------------------
+// Top-level redraw
+// ---------------------------------------------------------------------
+function redrawAll() {
+  drawLinePanel('pressureCanvas', 'pressureTooltip', pressureChannels, pressureChannels, 'bar', 'pressure');
+  drawLinePanel('tempCanvas', 'tempTooltip', tempChannels, tempChannels, '°C', 'temp');
+  drawValvePanel();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(redrawAll, 150);
+});
+
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => setQuickRange(Number(btn.dataset.ms)));
+});
+document.getElementById('loadBtn').addEventListener('click', loadRange);
+attachHover('pressureCanvas', 'pressure');
+attachHover('tempCanvas', 'temp');
+attachHover('valveCanvas', 'valve');
+
+initI18n().then(() => {
+  document.title = t('history_page_title');
+  setQuickRange(86400000); // default: last 24h
+});
+</script>
+
+</body>
+</html>

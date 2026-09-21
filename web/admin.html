@@ -97,6 +97,7 @@
   <h1 data-i18n="admin_page_title">Admin / Configuration</h1>
   <div style="display:flex; align-items:center; gap:16px;">
     <a href="/diagnostics.html" data-i18n="admin_diagnostics_link">Diagnostics</a>
+    <a href="/history.html" data-i18n="admin_history_link">History</a>
     <a href="/docs.html" data-i18n="admin_api_docs_link">API Docs</a>
     <a href="/operator.html">&larr; <span data-i18n="admin_back_dashboard">Back to dashboard</span></a>
   </div>
@@ -186,6 +187,9 @@
         <div class="field"><label><span data-i18n="admin_reverse_delay">Reverse delay</span><span class="unit">ms</span></label>
           <input type="number" id="s1pulse" min="0" step="10"></div>
       </div>
+      <div class="field"><label><span data-i18n="admin_pressure_filter">Pressure filter</span><span class="unit" data-i18n="admin_pressure_filter_unit">samples</span></label>
+        <input type="number" id="s1filter" min="1" step="1"></div>
+      <p class="hint" data-i18n="admin_pressure_filter_hint">Median filter over this many samples to reject brief noise spikes before spike detection; 1 = disabled.</p>
     </div>
 
     <div class="card">
@@ -205,6 +209,9 @@
         <div class="field"><label><span data-i18n="admin_reverse_delay">Reverse delay</span><span class="unit">ms</span></label>
           <input type="number" id="s2pulse" min="0" step="10"></div>
       </div>
+      <div class="field"><label><span data-i18n="admin_pressure_filter">Pressure filter</span><span class="unit" data-i18n="admin_pressure_filter_unit">samples</span></label>
+        <input type="number" id="s2filter" min="1" step="1"></div>
+      <p class="hint" data-i18n="admin_pressure_filter_hint">Median filter over this many samples to reject brief noise spikes before spike detection; 1 = disabled.</p>
     </div>
 
     <div class="card">
@@ -233,6 +240,9 @@
         <input type="number" id="ventDur" min="0" step="100"></div>
       <div class="field"><label><span data-i18n="admin_homing_duration">Homing duration (startup)</span><span class="unit">ms</span></label>
         <input type="number" id="homingDur" min="0" step="100"></div>
+      <div class="field"><label><span data-i18n="admin_pressure_blank">Pressure blanking after any valve switch</span><span class="unit">ms</span></label>
+        <input type="number" id="pressureBlank" min="0" step="10"></div>
+      <p class="hint" data-i18n="admin_pressure_blank_hint">Ignore pressure readings for spike detection on both circuits for this long after any relay on either circuit switches; 0 = disabled.</p>
       <div class="field"><label><span data-i18n="admin_poll_period">Control loop poll period</span><span class="unit">ms</span></label>
         <input type="number" id="pollPeriod" min="10" step="10"></div>
     </div>
@@ -644,6 +654,7 @@ async function load() {
     setv('s1delta', c.stage1.spikeDeltaBar);
     setv('s1window', c.stage1.spikeWindowMs);
     setv('s1pulse', c.stage1.reverseDelayMs);
+    setv('s1filter', c.stage1.pressureFilterSamples);
 
     document.getElementById('s2name').textContent = c.stage2.name;
     setv('s2min', c.stage2.minStrokeTimeMs);
@@ -651,6 +662,7 @@ async function load() {
     setv('s2delta', c.stage2.spikeDeltaBar);
     setv('s2window', c.stage2.spikeWindowMs);
     setv('s2pulse', c.stage2.reverseDelayMs);
+    setv('s2filter', c.stage2.pressureFilterSamples);
 
     setv('maxHyd', c.safety.maxHydraulicPressureBar);
     setv('maxH2', c.safety.maxHydrogenPressureBar);
@@ -662,6 +674,7 @@ async function load() {
     setv('tankT', c.tank.nominalTempC);
     setv('ventDur', c.vent.durationMs);
     setv('homingDur', c.homing.durationMs);
+    setv('pressureBlank', c.pressureBlankTimeMs);
     setv('pollPeriod', c.pollPeriodMs);
 
     setv('canIface', c.canModule.interface);
@@ -726,15 +739,16 @@ async function apply(persist) {
       name: document.getElementById('s1name').textContent,
       minStrokeTimeMs: int('s1min'), maxStrokeTimeMs: int('s1max'),
       spikeDeltaBar: num('s1delta'), spikeWindowMs: int('s1window'),
-      reverseDelayMs: int('s1pulse'),
+      reverseDelayMs: int('s1pulse'), pressureFilterSamples: int('s1filter'),
     },
     stage2: {
       name: document.getElementById('s2name').textContent,
       minStrokeTimeMs: int('s2min'), maxStrokeTimeMs: int('s2max'),
       spikeDeltaBar: num('s2delta'), spikeWindowMs: int('s2window'),
-      reverseDelayMs: int('s2pulse'),
+      reverseDelayMs: int('s2pulse'), pressureFilterSamples: int('s2filter'),
     },
     homing: { durationMs: int('homingDur') },
+    pressureBlankTimeMs: int('pressureBlank'),
     safety: {
       maxHydraulicPressureBar: num('maxHyd'),
       maxHydrogenPressureBar: num('maxH2'),

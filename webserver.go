@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 type WebServer struct {
@@ -16,6 +18,7 @@ type WebServer struct {
 	pm          *PressureModule
 	tm          *TemperatureModule
 	dim         *DigitalInputModule
+	history     *HistoryStore
 	listenAddr  string
 	configPath  string
 	webDir      string
@@ -24,9 +27,9 @@ type WebServer struct {
 	validCodes  *ValidCodes
 }
 
-func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
+func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, history *HistoryStore, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
 	return &WebServer{
-		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim,
+		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim, history: history,
 		listenAddr: listenAddr, configPath: configPath, webDir: webDir,
 		auth: auth, dispenseLog: dispenseLog, validCodes: validCodes,
 	}
@@ -77,6 +80,7 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/operator.html", w.requireAuth(w.serveStatic("operator.html")))
 	mux.HandleFunc("/admin.html", w.requireAuth(w.serveStatic("admin.html")))
 	mux.HandleFunc("/diagnostics.html", w.requireAuth(w.serveStatic("diagnostics.html")))
+	mux.HandleFunc("/history.html", w.requireAuth(w.serveStatic("history.html")))
 	mux.HandleFunc("/api/diagnostics", w.requireAuth(w.handleDiagnostics))
 	mux.HandleFunc("/api/clearfault", w.requireAuth(w.handleClearFault))
 	mux.HandleFunc("/api/config", w.requireAuth(w.handleConfig))
@@ -91,6 +95,9 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/api/admin/codes", w.requireAuth(w.handleAdminCodes))
 	mux.HandleFunc("/docs.html", w.requireAuth(w.serveStatic("docs.html")))
 	mux.HandleFunc("/api/docs", w.requireAuth(w.handleAPIDocs))
+	mux.HandleFunc("/api/history/channels", w.requireAuth(w.handleHistoryChannels))
+	mux.HandleFunc("/api/history/readings", w.requireAuth(w.handleHistoryReadings))
+	mux.HandleFunc("/api/history/valves", w.requireAuth(w.handleHistoryValves))
 
 	log.Printf("Web UI listening on %s", w.listenAddr)
 	return http.ListenAndServe(w.listenAddr, mux)
@@ -447,4 +454,125 @@ func (w *WebServer) handleAdminCodes(rw http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(rw, "GET or POST required", http.StatusMethodNotAllowed)
 	}
+}
+
+const (
+	defaultHistoryLimit = 10000
+	maxHistoryLimit     = 100000
+)
+
+type historyChannelsResponse struct {
+	Readings []string `json:"readings"`
+	Valves   []string `json:"valves"`
+}
+
+// handleHistoryChannels lists every valid channel name for the
+// readings/valves history endpoints below, so a consumer never has to
+// hardcode them - generated from the same enumerations the
+// diagnostics page uses (see allPressureSensors etc. in controller.go).
+func (w *WebServer) handleHistoryChannels(rw http.ResponseWriter, r *http.Request) {
+	resp := historyChannelsResponse{}
+	for _, s := range allPressureSensors {
+		resp.Readings = append(resp.Readings, s.String())
+	}
+	for _, s := range allTempSensors {
+		resp.Readings = append(resp.Readings, s.String())
+	}
+	for _, v := range allRelays {
+		resp.Valves = append(resp.Valves, v.String())
+	}
+	for _, d := range allDigitalInputs {
+		resp.Valves = append(resp.Valves, d.String())
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(resp)
+}
+
+// parseHistoryRange reads the shared from/to/limit query parameters
+// used by both history query endpoints below: from defaults to 24h
+// ago, to defaults to now, limit defaults to defaultHistoryLimit and is
+// capped at maxHistoryLimit.
+func parseHistoryRange(r *http.Request) (from, to time.Time, limit int, err error) {
+	now := time.Now()
+	from, to = now.Add(-24*time.Hour), now
+	if s := r.URL.Query().Get("from"); s != "" {
+		from, err = time.Parse(time.RFC3339, s)
+		if err != nil {
+			return from, to, limit, fmt.Errorf("invalid from: %w", err)
+		}
+	}
+	if s := r.URL.Query().Get("to"); s != "" {
+		to, err = time.Parse(time.RFC3339, s)
+		if err != nil {
+			return from, to, limit, fmt.Errorf("invalid to: %w", err)
+		}
+	}
+	limit = defaultHistoryLimit
+	if s := r.URL.Query().Get("limit"); s != "" {
+		limit, err = strconv.Atoi(s)
+		if err != nil || limit <= 0 {
+			return from, to, limit, fmt.Errorf("invalid limit %q", s)
+		}
+	}
+	if limit > maxHistoryLimit {
+		limit = maxHistoryLimit
+	}
+	return from, to, limit, nil
+}
+
+type historyReadingsResponse struct {
+	Channel string         `json:"channel"`
+	Points  []ReadingPoint `json:"points"`
+}
+
+// handleHistoryReadings serves logged pressure/temperature history for
+// one channel over a time range - see HistoryStore.QueryReadings.
+func (w *WebServer) handleHistoryReadings(rw http.ResponseWriter, r *http.Request) {
+	channel := r.URL.Query().Get("channel")
+	if _, ok := ParseSensorInput(channel); !ok {
+		http.Error(rw, fmt.Sprintf("unknown reading channel %q", channel), http.StatusBadRequest)
+		return
+	}
+	from, to, limit, err := parseHistoryRange(r)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	points, err := w.history.QueryReadings(channel, from, to, limit)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(historyReadingsResponse{Channel: channel, Points: points})
+}
+
+type historyValvesResponse struct {
+	Channel string       `json:"channel"`
+	Points  []StatePoint `json:"points"`
+}
+
+// handleHistoryValves serves logged valve/relay/digital-input state
+// history for one channel over a time range - see
+// HistoryStore.QueryValveStates.
+func (w *WebServer) handleHistoryValves(rw http.ResponseWriter, r *http.Request) {
+	channel := r.URL.Query().Get("channel")
+	_, isRelay := ParseRelayOutput(channel)
+	_, isDigital := ParseDigitalInput(channel)
+	if !isRelay && !isDigital {
+		http.Error(rw, fmt.Sprintf("unknown valve channel %q", channel), http.StatusBadRequest)
+		return
+	}
+	from, to, limit, err := parseHistoryRange(r)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	points, err := w.history.QueryValveStates(channel, from, to, limit)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(rw).Encode(historyValvesResponse{Channel: channel, Points: points})
 }

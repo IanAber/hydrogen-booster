@@ -107,6 +107,23 @@ var apiDocs = []apiEndpointDoc{
 		Summary:  "This list, as JSON.",
 		Response: "an array of apiEndpointDoc: method, path, auth, summary, request, response",
 	},
+	{
+		Method: "GET", Path: "/api/history/channels", Auth: authStaff,
+		Summary:  "Valid channel names for /api/history/readings and /api/history/valves.",
+		Response: `{"readings":["Hyd1Pressure","OutputTemp",...], "valves":["Valve1A(dir)","Motor1Powered",...]}`,
+	},
+	{
+		Method: "GET", Path: "/api/history/readings", Auth: authStaff,
+		Summary:  "Logged pressure/temperature history for one channel, sampled on a fixed interval (see -history-sample-interval).",
+		Request:  "query params: channel (required, see /api/history/channels), from/to (RFC3339, default last 24h), limit (default 10000, max 100000)",
+		Response: `{"channel":"Hyd1Pressure", "points":[{"ts":"2026-09-21T12:00:00Z","value":182.4}]}`,
+	},
+	{
+		Method: "GET", Path: "/api/history/valves", Auth: authStaff,
+		Summary:  "Logged valve/relay/digital-input state history for one channel, recorded only on state change; the first point returned carries forward whatever state was already in effect at the start of the requested window.",
+		Request:  "query params: channel (required, see /api/history/channels), from/to (RFC3339, default last 24h), limit (default 10000, max 100000)",
+		Response: `{"channel":"Pump1", "points":[{"ts":"2026-09-21T12:00:00Z","state":true}]}`,
+	},
 }
 
 func (w *WebServer) handleAPIDocs(rw http.ResponseWriter, r *http.Request) {

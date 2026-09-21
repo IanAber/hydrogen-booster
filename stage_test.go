@@ -220,6 +220,87 @@ func TestStagesPressureSpikeEndsStroke(t *testing.T) {
 	}
 }
 
+func TestStagesMedianFilterRejectsIsolatedNoiseSpike(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Homing.Duration = 0
+	cfg.Stage1.PressureFilterSamples = 3
+	cfg.Stage1.MaxStrokeTime = time.Hour // only the spike detector should be able to end this stroke
+	cfg.Stage1.MinStrokeTime = 0
+	cfg.Stage1.SpikeDeltaBar = 10
+	cfg.Stage1.SpikeWindow = time.Hour // keep all samples in the comparison window for the test's duration
+	cfg.Stage2.MaxStrokeTime = time.Hour
+	live := NewLiveConfig(cfg)
+	io := newFakeStageIO()
+	s := NewStages(live, io)
+
+	s.Start()
+	start := time.Now()
+	// Seed the sensor with the baseline reading *before* the tick that ends
+	// homing and begins driving, so that first driving-phase sample - taken
+	// within this same Tick call - is the intended baseline, not a phantom
+	// zero reading from the not-yet-configured fake sensor.
+	io.setPressure(Hyd1Pressure, 20)
+	s.Tick(start) // Homing.Duration is 0, so this ends homing immediately; history[0]=(0ms,20)
+
+	step := func(p float64, elapsedMs int) {
+		io.setPressure(Hyd1Pressure, p)
+		s.Tick(start.Add(time.Duration(elapsedMs) * time.Millisecond))
+	}
+
+	step(20, 10) // filterBuf=[20,20]
+
+	step(35, 20) // filterBuf=[20,20,35], median=20 - a single noisy sample
+	if io.relayOn(Valve1B) {
+		t.Fatal("an isolated single-sample noise spike should be rejected by the median filter")
+	}
+	step(20, 30) // filterBuf=[20,35,20], median=20 - back to baseline
+	if io.relayOn(Valve1B) {
+		t.Fatal("stroke should still be driving once the isolated spike has scrolled out of the filter")
+	}
+	step(20, 40) // filterBuf=[35,20,20], median=20
+	step(20, 50) // filterBuf=[20,20,20], median=20 - fully flushed
+
+	step(35, 60) // filterBuf=[20,20,35], median=20 - one genuine high sample, still a minority
+	if io.relayOn(Valve1B) {
+		t.Fatal("a single high sample should not yet flip the median")
+	}
+	step(35, 70) // filterBuf=[20,35,35], median=35 - a sustained rise, now the majority
+	if !io.relayOn(Valve1B) {
+		t.Fatal("a sustained rise (majority of the filter window) should still be detected as a spike")
+	}
+}
+
+func TestStagesPressureBlankTimeSuppressesSpikeAfterSwitch(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Homing.Duration = 0
+	cfg.PressureBlankTime = 500 * time.Millisecond
+	cfg.Stage1.MaxStrokeTime = time.Hour
+	cfg.Stage1.MinStrokeTime = 0
+	cfg.Stage1.SpikeDeltaBar = 10
+	cfg.Stage1.SpikeWindow = time.Hour
+	cfg.Stage2.MaxStrokeTime = time.Hour
+	live := NewLiveConfig(cfg)
+	io := newFakeStageIO()
+	s := NewStages(live, io)
+
+	s.Start()
+	start := time.Now()
+	io.setPressure(Hyd1Pressure, 20) // baseline, seeded before the homing-ending tick (see median filter test)
+	s.Tick(start)                    // ends homing immediately, and records this relay switch as lastSwitch
+
+	io.setPressure(Hyd1Pressure, 35) // a spike-sized jump, but right after the homing->driving switch
+	s.Tick(start.Add(10 * time.Millisecond))
+	if io.relayOn(Valve1B) {
+		t.Fatal("a spike-sized reading arriving within the post-switch blank window should be suppressed")
+	}
+
+	// Same elevated reading, but now past the blank window.
+	s.Tick(start.Add(520 * time.Millisecond))
+	if !io.relayOn(Valve1B) {
+		t.Fatal("the same reading should count as a spike once the post-switch blank window has elapsed")
+	}
+}
+
 func TestStagesStopDeenergisesAllFourRelays(t *testing.T) {
 	live := NewLiveConfig(shortHomingConfig())
 	io := newFakeStageIO()

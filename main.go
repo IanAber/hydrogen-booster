@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 )
 
 func main() {
@@ -23,6 +24,13 @@ func main() {
 	validCodesFile := flag.String("valid-codes-file", "valid-codes.txt",
 		"path to the admin-maintained customer code allow-list (plain text, "+
 			"\"code,Full Name\" per line); a fill's customer code must appear here")
+	historyDBFile := flag.String("history-db", "history.db",
+		"path to the SQLite database storing pressure/temperature/valve history; "+
+			"queried via GET /api/history/*")
+	historySampleInterval := flag.Duration("history-sample-interval", 5*time.Second,
+		"how often to sample pressure/temperature readings into the history database")
+	historyRetentionDays := flag.Int("history-retention-days", 30,
+		"how many days of history to keep before older rows are pruned")
 	flag.Parse()
 
 	adminAuth, err := LoadOrCreateAdminAuth(*adminPasswordFile)
@@ -98,6 +106,17 @@ func main() {
 	ctrl.SetValidCodes(validCodes)
 	go ctrl.Run()
 
-	srv := NewWebServer(ctrl, live, pm, tm, dim, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
+	// Background history log: pressure/temperature sampled on a fixed
+	// interval, valve/relay/digital-input states logged only on change.
+	// Runs continuously regardless of job phase - see historylogger.go.
+	history, err := NewHistoryStore(*historyDBFile)
+	if err != nil {
+		log.Fatalf("history database: %v", err)
+	}
+	defer history.Close()
+	histLogger := NewHistoryLogger(history, io, *historySampleInterval, time.Duration(*historyRetentionDays)*24*time.Hour)
+	go histLogger.Run()
+
+	srv := NewWebServer(ctrl, live, pm, tm, dim, history, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
 	log.Fatal(srv.ListenAndServe())
 }
