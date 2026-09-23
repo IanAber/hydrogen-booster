@@ -2,10 +2,53 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestDiscoverSerialPortsListsByIDEntries(t *testing.T) {
+	dir := t.TempDir()
+	old := serialPortsByIDPath
+	serialPortsByIDPath = dir
+	defer func() { serialPortsByIDPath = old }()
+
+	for _, name := range []string{
+		"usb-FTDI_USB-RS232_Cable_FT8ZH1YV-if00-port0",
+		"usb-Aalborg_XFM-if00",
+	} {
+		if err := os.Symlink("../../ttyUSB0", filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := DiscoverSerialPorts()
+	want := []string{
+		filepath.Join(dir, "usb-Aalborg_XFM-if00"),
+		filepath.Join(dir, "usb-FTDI_USB-RS232_Cable_FT8ZH1YV-if00-port0"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got %v, want %v", got, want)
+			break
+		}
+	}
+}
+
+func TestDiscoverSerialPortsMissingDirectory(t *testing.T) {
+	old := serialPortsByIDPath
+	serialPortsByIDPath = filepath.Join(t.TempDir(), "does-not-exist")
+	defer func() { serialPortsByIDPath = old }()
+
+	if got := DiscoverSerialPorts(); got != nil {
+		t.Errorf("expected nil when /dev/serial/by-id doesn't exist, got %v", got)
+	}
+}
 
 // fakeSerialPort is a minimal in-memory SerialPort for testing
 // FlowModule without real hardware: Write records what was sent, Read

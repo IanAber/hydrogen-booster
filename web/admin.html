@@ -413,7 +413,7 @@
     <div id="flowSensorFields">
       <div class="row2">
         <div class="field"><label data-i18n="admin_flow_port">Serial port</label>
-          <input type="text" id="flowPort" placeholder="/dev/ttyUSB0"></div>
+          <select id="flowPort"></select></div>
         <div class="field"><label data-i18n="admin_flow_baud">Baud rate</label>
           <input type="number" id="flowBaud" min="1200" step="1"></div>
       </div>
@@ -480,6 +480,38 @@ function tempSensorOptions() {
 // whatever's already assigned in the config so a device that's briefly
 // offline doesn't disappear from its row's dropdown.
 let availableOneWireDevices = [];
+
+// Populated from /api/flow/status as USB-serial adapters are
+// discovered under /dev/serial/by-id (stable across reboots/re-plugging,
+// unlike the raw /dev/ttyUSBN nodes) - same "seed with whatever's
+// already configured" approach as availableOneWireDevices above.
+let availableSerialPorts = [];
+
+function buildFlowPortOptions(currentPort) {
+  const sel = document.getElementById('flowPort');
+  const ports = new Set(availableSerialPorts);
+  if (currentPort) ports.add(currentPort);
+  sel.innerHTML = Array.from(ports).sort().map(p =>
+    `<option value="${p}" ${p === (currentPort || '') ? 'selected' : ''}>${p}</option>`
+  ).join('');
+}
+
+// growFlowPortDropdown adds newly-discovered ports to the live dropdown
+// without disturbing whatever's currently selected - called on every
+// /api/flow/status poll, mirroring growDeviceDropdowns for 1-Wire
+// devices.
+function growFlowPortDropdown(devices) {
+  availableSerialPorts = devices;
+  const sel = document.getElementById('flowPort');
+  const have = new Set(Array.from(sel.options).map(o => o.value));
+  devices.forEach(p => {
+    if (!have.has(p)) {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      sel.appendChild(opt);
+    }
+  });
+}
 
 function buildTempChannelRows(channels) {
   const tbody = document.getElementById('tempChannelRows');
@@ -769,8 +801,15 @@ async function load() {
     document.getElementById('digitalLive').checked = c.digitalInputModule.liveEnabled;
     buildDigitalInputRows(c.digitalInputModule.channels);
 
+    try {
+      const flowRes = await fetch('/api/flow/status');
+      const flowSt = await flowRes.json();
+      availableSerialPorts = flowSt.availableDevices || [];
+    } catch (e) {
+      availableSerialPorts = [];
+    }
     setv('flowSensorType', c.flowModule.sensorType);
-    setv('flowPort', c.flowModule.port);
+    buildFlowPortOptions(c.flowModule.port);
     setv('flowBaud', c.flowModule.baudRate);
     document.getElementById('flowUseRs485').checked = c.flowModule.useRs485;
     setv('flowAddress', c.flowModule.address);
@@ -1199,6 +1238,7 @@ async function pollFlowStatus() {
   try {
     const res = await fetch('/api/flow/status');
     const st = await res.json();
+    growFlowPortDropdown(st.availableDevices || []);
     const statusEl = document.getElementById('flowCommsStatus');
     if (st.sensorType === 'none') {
       statusEl.innerHTML = t('admin_flow_no_sensor');

@@ -4,11 +4,40 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// serialPortsByIDPath is a var, not a const, so tests can point it at a
+// temporary directory instead of the real udev-managed tree (mirrors
+// w1DevicesPath in onewire.go).
+var serialPortsByIDPath = "/dev/serial/by-id"
+
+// DiscoverSerialPorts lists the stable, human-readable serial device
+// paths under /dev/serial/by-id (populated by udev, and stable across
+// reboots/re-plugging - unlike the raw /dev/ttyUSBN device nodes, whose
+// numbering depends on plug order) - for the admin screen's port
+// picker. Returns an empty slice (not an error) if the directory
+// doesn't exist - off-target development, or no USB-serial adapter has
+// ever been plugged in - rather than failing the whole config load
+// over it (mirrors DiscoverOneWireDevices in onewire.go).
+func DiscoverSerialPorts() []string {
+	entries, err := os.ReadDir(serialPortsByIDPath)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, e := range entries {
+		paths = append(paths, filepath.Join(serialPortsByIDPath, e.Name()))
+	}
+	sort.Strings(paths)
+	return paths
+}
 
 // SerialPort abstracts one open serial connection - OpenSerialPort
 // (serialport_linux.go) is the real implementation; tests pass a fake.
@@ -313,17 +342,22 @@ func (m *FlowModule) ResetTotal() (handled bool, err error) {
 // FlowModuleStatus reports the flow module's state for the admin
 // screen/diagnostics - see webserver.go's handleFlowStatus.
 type FlowModuleStatus struct {
-	SensorType string     `json:"sensorType"`
-	Active     bool       `json:"active"`
-	LastUpdate *time.Time `json:"lastUpdate,omitempty"`
-	TotalKg    float64    `json:"totalKg"`
-	Ok         bool       `json:"ok"`
-	Error      string     `json:"error,omitempty"`
+	SensorType       string     `json:"sensorType"`
+	Active           bool       `json:"active"`
+	LastUpdate       *time.Time `json:"lastUpdate,omitempty"`
+	TotalKg          float64    `json:"totalKg"`
+	Ok               bool       `json:"ok"`
+	Error            string     `json:"error,omitempty"`
+	AvailableDevices []string   `json:"availableDevices"`
 }
 
 func (m *FlowModule) Status() FlowModuleStatus {
 	cfg := m.live.Snapshot()
-	st := FlowModuleStatus{SensorType: string(cfg.FlowModule.SensorType), Active: flowModuleActive(cfg)}
+	st := FlowModuleStatus{
+		SensorType:       string(cfg.FlowModule.SensorType),
+		Active:           flowModuleActive(cfg),
+		AvailableDevices: DiscoverSerialPorts(),
+	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
