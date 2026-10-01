@@ -11,6 +11,12 @@
     --warn: #f2b53d; --bad: #ef4b4b;
   }
   * { box-sizing: border-box; }
+  /* Generic touch-friendliness - removes the ~300ms tap delay / double-
+     tap-to-zoom some touchscreen browsers still apply, and stops a
+     slow/dragging touch from selecting text instead of registering as
+     a tap. Not tied to any specific screen. */
+  button, input { touch-action: manipulation; }
+  button { user-select: none; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -30,6 +36,34 @@
     text-transform: uppercase; letter-spacing: .04em;
   }
   main { padding: 20px 24px; max-width: 520px; margin: 0 auto; }
+
+  /* --- Landscape two-column layout ----------------------------------
+     Narrow/portrait (no media query match): identical to the original
+     single stacked column. min-width is a generic "wide enough for two
+     comfortable columns" threshold, not tied to any specific display -
+     the actual target screen isn't known yet. */
+  .screen { display: flex; flex-direction: column; }
+  @media (min-width: 900px) {
+    /* On a large landscape display the form content is shorter than the
+       viewport - vertically center it in the space below the banner
+       instead of leaving it pinned to the top with a dead gap below. */
+    body { display: flex; flex-direction: column; min-height: 100vh; }
+    .banner { flex: 0 0 auto; }
+    /* width:100% is required alongside max-width here: main is now a
+       flex item of body, and its existing margin:0 auto (base rule,
+       above) would otherwise opt it out of stretching and shrink it to
+       its content's width instead of filling up to the max-width cap. */
+    main { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; }
+    main { max-width: 1200px; width: 100%; }
+    .screen { flex-direction: row; align-items: flex-start; gap: 24px; }
+    .status-col, .setup-col { flex: 1; min-width: 0; }
+    /* Job Setup visually on the left (matching operator.html's existing
+       controls-left/status-right convention) even though it's second
+       in the DOM/tab order - status-col stays first so narrow layouts
+       and keyboard/tab navigation are unaffected. */
+    .setup-col { order: -1; }
+    input[type=number], input[type=tel] { max-width: 320px; }
+  }
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
     padding: 20px; margin-bottom: 20px;
@@ -38,7 +72,7 @@
     color: var(--muted); margin: 0 0 14px; }
   label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
   input[type=number], input[type=tel] {
-    width: 100%; padding: 12px 12px; background: var(--panel2); border: 1px solid var(--border);
+    width: 100%; min-height: 48px; padding: 12px 12px; background: var(--panel2); border: 1px solid var(--border);
     border-radius: 6px; color: var(--text); font-size: 18px; font-variant-numeric: tabular-nums;
   }
   input[type=tel] { letter-spacing: .12em; }
@@ -72,7 +106,7 @@
   /* --- Job setup ---------------------------------------------------- */
   .nozzle-group, .preset-group { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
   .nozzle-group button, .preset-group button {
-    flex: 1; min-width: 44px; padding: 12px 8px; border-radius: 6px; border: 1px solid var(--border);
+    flex: 1; min-width: 44px; min-height: 48px; padding: 12px 8px; border-radius: 6px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text); cursor: pointer; font-size: 15px; font-weight: 600;
   }
   .nozzle-group button.selected, .preset-group button.selected {
@@ -80,7 +114,7 @@
   }
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   button.primary, button.danger, button.warnbtn {
-    flex: 1; padding: 14px; border-radius: 6px; border: none; font-size: 16px;
+    flex: 1; min-height: 48px; padding: 14px; border-radius: 6px; border: none; font-size: 16px;
     font-weight: 700; cursor: pointer;
   }
   button.primary { background: var(--good); color: #06210f; }
@@ -90,7 +124,7 @@
   .code-row { display: flex; gap: 8px; }
   .code-row input { flex: 1; }
   button.secondary {
-    padding: 0 16px; border-radius: 6px; border: 1px solid var(--border);
+    min-height: 48px; padding: 0 16px; border-radius: 6px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .welcome { color: var(--good); font-size: 14px; font-weight: 600; margin-top: 8px; min-height: 18px; }
@@ -111,12 +145,22 @@
 </div>
 
 <main>
+<div class="screen">
+  <div class="status-col">
 
   <div class="card gauge-card">
     <div class="gauge-status"><div id="phasePill" class="phase-pill">--</div></div>
     <div class="gauge" id="gauge"></div>
     <div class="gauge-unit" id="gaugeUnitLabel" data-i18n="cust_kg_dispensed">kg dispensed</div>
   </div>
+
+  <div class="card">
+    <div class="stat-row"><span data-i18n="idx_output_pressure">Output pressure</span><span class="val" id="outP">-- bar</span></div>
+    <div class="stat-row"><span data-i18n="idx_elapsed">Elapsed</span><span class="val" id="elapsedVal">--</span></div>
+  </div>
+
+  </div>
+  <div class="setup-col">
 
   <div class="card">
     <h2 data-i18n="idx_job_setup">Job Setup</h2>
@@ -162,13 +206,11 @@
       <button class="danger" id="stopBtn" onclick="stopJob()" data-i18n="idx_stop" disabled>Stop</button>
     </div>
     <div class="error" id="errorMsg"></div>
+    <div class="hint" id="manualModeNotice" style="display:none; color:var(--warn);" data-i18n="cust_manual_mode_active">Manual control is active - automatic fills are unavailable.</div>
   </div>
 
-  <div class="card">
-    <div class="stat-row"><span data-i18n="idx_output_pressure">Output pressure</span><span class="val" id="outP">-- bar</span></div>
-    <div class="stat-row"><span data-i18n="idx_elapsed">Elapsed</span><span class="val" id="elapsedVal">--</span></div>
   </div>
-
+</div>
 </main>
 
 <script>
@@ -368,6 +410,7 @@ async function lookupCode(code) {
 
 let jobRunning = false;
 let wasJobRunning = false;
+let manualModeActive = false;
 
 // Without real mass instrumentation there's nothing to record a
 // customer code against (see MassMeasurementEnabled's doc comment in
@@ -399,10 +442,11 @@ function updateButtonStates() {
   }
   wasJobRunning = jobRunning;
 
-  const canStart = codeValid() && !jobRunning;
+  const canStart = codeValid() && !jobRunning && !manualModeActive;
   document.getElementById('startBtn').disabled = !canStart;
   document.getElementById('fillPressureBtn').disabled = !canStart;
   document.getElementById('stopBtn').disabled = !jobRunning;
+  document.getElementById('manualModeNotice').style.display = manualModeActive ? '' : 'none';
 
   // Lock every other control while a fill is in progress, leaving only
   // Stop available - nozzle, amount, code, etc. shouldn't be changeable
@@ -495,6 +539,7 @@ async function poll() {
     gauge.update(gaugeValue);
 
     jobRunning = (s.phase === 'filling' || s.phase === 'venting');
+    manualModeActive = !!s.manualMode;
     updateButtonStates();
   } catch (e) {
     console.error(e);

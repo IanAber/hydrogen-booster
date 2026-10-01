@@ -93,6 +93,7 @@
 <header>
   <h1 data-i18n="idx_page_title">Hydrogen Booster Control</h1>
   <div style="display:flex; align-items:center; gap:16px;">
+    <a href="/manual.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_manual">Manual Control</span> &rarr;</a>
     <a href="/diagnostics.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_diagnostics">Diagnostics</span> &rarr;</a>
     <a href="/history.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_history">History</span> &rarr;</a>
     <a href="/admin.html" style="color:var(--muted); font-size:13px; text-decoration:none;"><span data-i18n="nav_admin">Admin / Config</span> &rarr;</a>
@@ -130,6 +131,7 @@
           <button class="warnbtn" id="clearFaultBtn" onclick="clearFault()" style="display:none;" data-i18n="idx_clear_fault">Clear Fault</button>
         </div>
         <div class="error" id="errorMsg"></div>
+        <div class="muted" id="manualModeNotice" style="display:none; color:var(--warn);" data-i18n="cust_manual_mode_active">Manual control is active - automatic fills are unavailable.</div>
       </div>
 
       <div class="card">
@@ -282,9 +284,10 @@ async function poll() {
     }
 
     const running = s.phase === 'filling' || s.phase === 'venting';
-    document.getElementById('startBtn').disabled = running || s.phase === 'fault';
+    document.getElementById('startBtn').disabled = running || s.phase === 'fault' || !!s.manualMode;
     document.getElementById('stopBtn').disabled = !running;
     document.getElementById('clearFaultBtn').style.display = (s.phase === 'fault') ? 'block' : 'none';
+    document.getElementById('manualModeNotice').style.display = s.manualMode ? '' : 'none';
 
   } catch (e) {
     console.error(e);

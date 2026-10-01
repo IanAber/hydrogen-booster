@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual Piston Control</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header nav { display: flex; align-items: center; gap: 16px; }
+  header nav a { color: var(--muted); font-size: 13px; text-decoration: none; }
+  header nav a:hover { color: var(--text); }
+  .mode-pill {
+    padding: 5px 12px; border-radius: 999px; font-weight: 700; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .04em; background: #26323b;
+  }
+  main { padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 14px; }
+  .control-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  button.primary, button.danger {
+    padding: 12px 20px; border-radius: 6px; border: none; font-size: 15px;
+    font-weight: 600; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #06192a; }
+  button.danger { background: var(--bad); color: #2a0505; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .error { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
+  .stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 760px) { .stage-grid { grid-template-columns: 1fr; } }
+  .stage-box { background: var(--panel2); border-radius: 8px; padding: 16px; opacity: 1; transition: opacity .2s; }
+  .stage-box.locked { opacity: .55; }
+  .stage-box h3 { margin: 0 0 12px; font-size: 15px; }
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0;
+    border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-of-type { border-bottom: none; }
+  .stat-row .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+    font-weight: 700; background: #26323b; }
+  .badge.up, .badge.open-state { color: var(--good); }
+  .badge.down, .badge.closed-state { color: var(--accent); }
+  .pump-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0 4px; }
+  .pump-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+  .pump-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  .jog-row { display: flex; gap: 10px; margin-top: 14px; }
+  .jogbtn {
+    flex: 1; padding: 22px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #243039; color: var(--text); font-size: 16px; font-weight: 700;
+    cursor: pointer; user-select: none; touch-action: none;
+  }
+  .jogbtn:active:not(:disabled) { background: var(--accent); color: #06192a; }
+  .jogbtn:disabled { opacity: .35; cursor: not-allowed; }
+  .hold-hint { text-align: center; font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .chart-controls { display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .legend-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+  .legend-item .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .window-group { display: flex; gap: 6px; }
+  .window-btn { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  .window-btn:hover { border-color: var(--accent); }
+  .window-btn.selected { background: var(--accent); border-color: var(--accent); color: #06192a; font-weight: 600; }
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap canvas { width: 100%; display: block; }
+  #pressureChartCanvas { height: 220px; }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="manual_page_title">Manual Piston Control</h1>
+  <nav>
+    <a href="/operator.html">&larr; <span data-i18n="nav_dashboard">Dashboard</span></a>
+    <a href="/diagnostics.html" data-i18n="nav_diagnostics">Diagnostics</a>
+    <a href="/history.html" data-i18n="nav_history">History</a>
+    <a href="/admin.html" data-i18n="nav_admin">Admin / Config</a>
+    <div id="modePill" class="mode-pill">--</div>
+  </nav>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 data-i18n="manual_mode_label">Manual Control</h2>
+    <div class="control-row">
+      <button class="primary" id="enableBtn" onclick="toggleManual(true)" data-i18n="manual_enable_btn">Enable Manual Control</button>
+      <button class="danger" id="disableBtn" onclick="toggleManual(false)" style="display:none;" data-i18n="manual_disable_btn">Disable Manual Control</button>
+    </div>
+    <p class="muted" data-i18n="manual_hint">Enabling manual control lets you drive each cylinder's pump, direction and relief valves directly, and prevents an automatic fill from starting. Disabling returns every valve to its safe default (relief open, direction and pumps off).</p>
+    <div class="error" id="manualError"></div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="manual_pressure_chart">Hydraulic Pressure</h2>
+    <div class="chart-controls">
+      <div class="legend-row">
+        <span class="legend-item"><span class="swatch" style="background:#3aa0ff"></span><span id="chartLegendS1">Stage 1</span></span>
+        <span class="legend-item"><span class="swatch" style="background:#f2b53d"></span><span id="chartLegendS2">Stage 2</span></span>
+      </div>
+      <div class="window-group" id="chartWindowGroup">
+        <button type="button" class="window-btn" data-ms="15000">15s</button>
+        <button type="button" class="window-btn selected" data-ms="30000">30s</button>
+        <button type="button" class="window-btn" data-ms="60000">60s</button>
+        <button type="button" class="window-btn" data-ms="120000">120s</button>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="pressureChartCanvas" height="220"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="manual_hydrogen_pressure_chart">Hydrogen Pressure</h2>
+    <div class="stat-row"><span data-i18n="manual_tank_pressure">Storage tank pressure</span><span class="val" id="tankPressureVal">-- bar</span></div>
+    <div class="stat-row"><span data-i18n="manual_interstage_pressure">Inter-stage pressure</span><span class="val" id="interStagePressureVal">-- bar</span></div>
+    <div class="stat-row"><span data-i18n="manual_output_pressure">Output pressure</span><span class="val" id="outputPressureVal">-- bar</span></div>
+
+    <div class="chart-controls" style="margin-top: 14px;">
+      <div class="legend-row">
+        <span class="legend-item"><span class="swatch" style="background:#35c26b"></span><span data-i18n="manual_tank_pressure">Storage tank pressure</span></span>
+        <span class="legend-item"><span class="swatch" style="background:#b46cff"></span><span data-i18n="manual_interstage_pressure">Inter-stage pressure</span></span>
+        <span class="legend-item"><span class="swatch" style="background:#3ad1c5"></span><span data-i18n="manual_output_pressure">Output pressure</span></span>
+      </div>
+      <div class="window-group">
+        <button type="button" class="window-btn" data-ms="15000">15s</button>
+        <button type="button" class="window-btn selected" data-ms="30000">30s</button>
+        <button type="button" class="window-btn" data-ms="60000">60s</button>
+        <button type="button" class="window-btn" data-ms="120000">120s</button>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="hydrogenChartCanvas" height="220"></canvas>
+    </div>
+  </div>
+
+  <div class="stage-grid">
+
+    <div class="stage-box locked" id="stage1Box">
+      <h3 id="stage1Name">Stage 1 (A/B)</h3>
+      <div class="stat-row"><span data-i18n="manual_hyd_pressure">Hydraulic pressure</span><span class="val" id="s1Pressure">-- bar</span></div>
+      <div class="stat-row"><span data-i18n="manual_relief_valve">Relief valve</span><span class="val"><span class="badge" id="s1Relief">--</span></span></div>
+      <div class="stat-row"><span data-i18n="manual_direction_valve">Direction valve</span><span class="val"><span class="badge" id="s1Dir">--</span></span></div>
+
+      <div class="pump-row">
+        <label><input type="checkbox" id="s1PumpToggle" onchange="setPump(1, this.checked)" disabled><span data-i18n="manual_pump_motor">Pump motor</span></label>
+      </div>
+
+      <div class="jog-row">
+        <button class="jogbtn" id="s1UpBtn" disabled data-i18n="manual_up">UP</button>
+        <button class="jogbtn" id="s1DownBtn" disabled data-i18n="manual_down">DOWN</button>
+      </div>
+      <div class="hold-hint" data-i18n="manual_hold_hint">Press and hold to drive the ram; release to stop.</div>
+    </div>
+
+    <div class="stage-box locked" id="stage2Box">
+      <h3 id="stage2Name">Stage 2 (C/D)</h3>
+      <div class="stat-row"><span data-i18n="manual_hyd_pressure">Hydraulic pressure</span><span class="val" id="s2Pressure">-- bar</span></div>
+      <div class="stat-row"><span data-i18n="manual_relief_valve">Relief valve</span><span class="val"><span class="badge" id="s2Relief">--</span></span></div>
+      <div class="stat-row"><span data-i18n="manual_direction_valve">Direction valve</span><span class="val"><span class="badge" id="s2Dir">--</span></span></div>
+
+      <div class="pump-row">
+        <label><input type="checkbox" id="s2PumpToggle" onchange="setPump(2, this.checked)" disabled><span data-i18n="manual_pump_motor">Pump motor</span></label>
+      </div>
+
+      <div class="jog-row">
+        <button class="jogbtn" id="s2UpBtn" disabled data-i18n="manual_up">UP</button>
+        <button class="jogbtn" id="s2DownBtn" disabled data-i18n="manual_down">DOWN</button>
+      </div>
+      <div class="hold-hint" data-i18n="manual_hold_hint">Press and hold to drive the ram; release to stop.</div>
+    </div>
+
+  </div>
+
+</main>
+
+<script>
+let manualModeEnabled = false;
+
+function fmt(n, d=1) { return (typeof n === 'number') ? n.toFixed(d) : '--'; }
+
+function byName(list, name) {
+  return (list || []).find(x => x.name === name);
+}
+
+// updateManualUI reflects manualModeEnabled (last learned from
+// /api/status) onto every control on the page - the toggle buttons, the
+// mode pill, and whether the pump checkboxes / jog buttons are usable at
+// all. Called after every status poll and after every enable/disable
+// attempt, so the UI always matches the server's actual state rather
+// than whatever a click optimistically assumed.
+function updateManualUI() {
+  document.getElementById('enableBtn').style.display = manualModeEnabled ? 'none' : '';
+  document.getElementById('disableBtn').style.display = manualModeEnabled ? '' : 'none';
+
+  const pill = document.getElementById('modePill');
+  pill.textContent = manualModeEnabled ? t('manual_mode_on') : t('manual_mode_off');
+  pill.style.background = manualModeEnabled ? 'var(--warn)' : '#26323b';
+  pill.style.color = manualModeEnabled ? '#2a1e00' : 'var(--text)';
+
+  for (const stage of [1, 2]) {
+    document.getElementById('stage' + stage + 'Box').classList.toggle('locked', !manualModeEnabled);
+    document.getElementById('s' + stage + 'PumpToggle').disabled = !manualModeEnabled;
+    document.getElementById('s' + stage + 'UpBtn').disabled = !manualModeEnabled;
+    document.getElementById('s' + stage + 'DownBtn').disabled = !manualModeEnabled;
+  }
+}
+
+async function toggleManual(enable) {
+  const errEl = document.getElementById('manualError');
+  errEl.textContent = '';
+  try {
+    const res = await fetch('/api/manual/enable', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enable}),
+    });
+    if (!res.ok) {
+      errEl.textContent = t('manual_failed') + ' ' + await res.text();
+    }
+  } catch (e) {
+    errEl.textContent = t('manual_failed') + ' ' + e;
+  }
+  poll();
+}
+
+async function setPump(stage, on) {
+  try {
+    const res = await fetch('/api/manual/pump', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({stage, on}),
+    });
+    if (!res.ok) {
+      document.getElementById('manualError').textContent = t('manual_failed') + ' ' + await res.text();
+    }
+  } catch (e) {
+    document.getElementById('manualError').textContent = t('manual_failed') + ' ' + e;
+  }
+}
+
+async function sendJog(stage, direction, active) {
+  try {
+    await fetch('/api/manual/jog', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({stage, direction, active}),
+    });
+  } catch (e) {
+    // best-effort - the next pointerup/poll cycle will settle state
+  }
+}
+
+// bindJog wires one jog button to fire on press (active=true) and clear
+// on every way a press can end - release, the pointer sliding off the
+// button, or the gesture being cancelled - so the relief valve never
+// stays closed because of a missed pointerup.
+function bindJog(stage, direction, btn) {
+  let held = false;
+  const press = (e) => {
+    if (btn.disabled) return;
+    e.preventDefault();
+    held = true;
+    sendJog(stage, direction, true);
+  };
+  const release = () => {
+    if (!held) return;
+    held = false;
+    sendJog(stage, direction, false);
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointerleave', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// releaseAllJogs is the last-resort failsafe for a held button whose
+// pointerup never reaches us (tab switch, window blur mid-press) - it
+// re-opens both stages' relief valves unconditionally.
+function releaseAllJogs() {
+  sendJog(1, 'up', false);
+  sendJog(2, 'up', false);
+}
+window.addEventListener('blur', releaseAllJogs);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllJogs(); });
+
+bindJog(1, 'up', document.getElementById('s1UpBtn'));
+bindJog(1, 'down', document.getElementById('s1DownBtn'));
+bindJog(2, 'up', document.getElementById('s2UpBtn'));
+bindJog(2, 'down', document.getElementById('s2DownBtn'));
+
+async function poll() {
+  try {
+    const res = await fetch('/api/status');
+    const s = await res.json();
+    manualModeEnabled = !!s.manualMode;
+    updateManualUI();
+  } catch (e) {
+    // keep last known state showing
+  }
+}
+
+async function pollDiagnostics() {
+  try {
+    const res = await fetch('/api/diagnostics');
+    const d = await res.json();
+    renderStage(1, 'Hyd1Pressure', 'Valve1A(dir)', 'Valve1B(pulse)', 'Pump1', d);
+    renderStage(2, 'Hyd2Pressure', 'Valve2A(dir)', 'Valve2B(pulse)', 'Pump2', d);
+    renderHydrogenPressures(d);
+    redrawCharts();
+  } catch (e) {
+    // keep last known values showing
+  }
+}
+
+// hydraulicSeries/hydrogenSeries buffer recent samples for the live
+// rolling charts below - CHART_MAX_HISTORY_MS is sized to the largest
+// window option so switching windows never needs a re-fetch, just a
+// re-filter of what's already buffered.
+const CHART_MAX_HISTORY_MS = 120000;
+const hydraulicSeries = { 1: [], 2: [] };
+const hydrogenSeries = { tank: [], inter: [], output: [] };
+let chartWindowMs = 30000;
+
+function pushSample(arr, t, value) {
+  arr.push({ t, v: value });
+  const cutoff = t - CHART_MAX_HISTORY_MS;
+  while (arr.length && arr[0].t < cutoff) arr.shift();
+}
+
+function renderHydrogenPressures(d) {
+  const tank = byName(d.sensors, 'TankPressure');
+  const inter = byName(d.sensors, 'InterStagePressure');
+  const output = byName(d.sensors, 'OutputPressure');
+  const now = Date.now();
+
+  document.getElementById('tankPressureVal').textContent = (tank && tank.ok) ? fmt(tank.value, 2) + ' bar' : '--';
+  document.getElementById('interStagePressureVal').textContent = (inter && inter.ok) ? fmt(inter.value, 2) + ' bar' : '--';
+  document.getElementById('outputPressureVal').textContent = (output && output.ok) ? fmt(output.value, 2) + ' bar' : '--';
+
+  if (tank && tank.ok) pushSample(hydrogenSeries.tank, now, tank.value);
+  if (inter && inter.ok) pushSample(hydrogenSeries.inter, now, inter.value);
+  if (output && output.ok) pushSample(hydrogenSeries.output, now, output.value);
+}
+
+function renderStage(stage, pressureName, dirName, reliefName, pumpName, d) {
+  const p = byName(d.sensors, pressureName);
+  const dir = byName(d.valves, dirName);
+  const relief = byName(d.valves, reliefName);
+  const pump = byName(d.valves, pumpName);
+
+  document.getElementById('s' + stage + 'Pressure').textContent = (p && p.ok) ? fmt(p.value, 2) + ' bar' : '--';
+  if (p && p.ok) pushSample(hydraulicSeries[stage], Date.now(), p.value);
+
+  const dirEl = document.getElementById('s' + stage + 'Dir');
+  const dirUp = !!(dir && dir.on);
+  dirEl.textContent = dir ? (dirUp ? t('common_up') : t('common_down')) : '--';
+  dirEl.className = 'badge ' + (dirUp ? 'up' : 'down');
+
+  // ReliefRelay energised (on) means the valve is open - see
+  // Controller.ManualJog/SetManualMode in controller.go.
+  const reliefEl = document.getElementById('s' + stage + 'Relief');
+  const reliefOpen = !!(relief && relief.on);
+  reliefEl.textContent = relief ? (reliefOpen ? t('common_open') : t('common_closed')) : '--';
+  reliefEl.className = 'badge ' + (reliefOpen ? 'open-state' : 'closed-state');
+
+  const pumpToggle = document.getElementById('s' + stage + 'PumpToggle');
+  if (pump && document.activeElement !== pumpToggle) pumpToggle.checked = pump.on;
+}
+
+// --- Live pressure chart -----------------------------------------------
+// A rolling line chart of both stages' hydraulic pressure, so a spike
+// (the automatic sequencer's own end-of-stroke signal - see
+// StageConfig.SpikeDeltaBar/SpikeWindow in config.go) is visible as it
+// happens, whether it's produced by a manual jog or just observed while
+// the automatic system runs. Hand-rolled canvas drawing, matching
+// history.html's chart code, rather than a bundled charting library.
+const CHART_PAD_LEFT = 46, CHART_PAD_RIGHT = 10, CHART_PAD_TOP = 10, CHART_PAD_BOTTOM = 20;
+
+function sizeChartCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.clientWidth;
+  const cssHeight = canvas.clientHeight;
+  canvas.width = Math.max(1, Math.round(cssWidth * dpr));
+  canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, cssWidth, cssHeight };
+}
+
+// drawSeriesChart is shared by both charts below - each call gets its
+// own canvas and series list (with per-series color) but the same
+// rolling time window, auto-scaled independently to its own series so
+// the hydraulic chart's ~0-250 bar range and the hydrogen chart's
+// ~0-750 bar range never fight over one y-axis.
+function drawSeriesChart(canvasId, series) {
+  const canvas = document.getElementById(canvasId);
+  const { ctx, cssWidth, cssHeight } = sizeChartCanvas(canvas);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const now = Date.now();
+  const t0 = now - chartWindowMs;
+  const filtered = series.map(s => ({ color: s.color, pts: s.points.filter(p => p.t >= t0) }));
+
+  if (!filtered.some(s => s.pts.length)) {
+    ctx.fillStyle = '#8b9aa5';
+    ctx.font = '12px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t('manual_chart_waiting'), cssWidth / 2, cssHeight / 2);
+    return;
+  }
+
+  const plotW = cssWidth - CHART_PAD_LEFT - CHART_PAD_RIGHT;
+  const plotH = cssHeight - CHART_PAD_TOP - CHART_PAD_BOTTOM;
+
+  let minV = Infinity, maxV = -Infinity;
+  filtered.forEach(s => s.pts.forEach(p => { if (p.v < minV) minV = p.v; if (p.v > maxV) maxV = p.v; }));
+  if (minV === maxV) { minV -= 1; maxV += 1; }
+  const margin = (maxV - minV) * 0.1;
+  minV -= margin; maxV += margin;
+
+  const xFor = (ts) => CHART_PAD_LEFT + ((ts - t0) / chartWindowMs) * plotW;
+  const yFor = (v) => CHART_PAD_TOP + (1 - (v - minV) / (maxV - minV)) * plotH;
+
+  const yTicks = 4;
+  ctx.strokeStyle = '#2a3742';
+  ctx.fillStyle = '#8b9aa5';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= yTicks; i++) {
+    const v = minV + (i / yTicks) * (maxV - minV);
+    const y = yFor(v);
+    ctx.beginPath();
+    ctx.moveTo(CHART_PAD_LEFT, y);
+    ctx.lineTo(cssWidth - CHART_PAD_RIGHT, y);
+    ctx.stroke();
+    ctx.fillText(v.toFixed(1), CHART_PAD_LEFT - 8, y);
+  }
+
+  const xTicks = 4;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= xTicks; i++) {
+    const frac = i / xTicks;
+    const x = CHART_PAD_LEFT + frac * plotW;
+    const secAgo = Math.round((chartWindowMs / 1000) * (1 - frac));
+    ctx.fillText(secAgo === 0 ? t('manual_chart_now') : '-' + secAgo + 's', x, cssHeight - CHART_PAD_BOTTOM + 6);
+  }
+
+  filtered.forEach(s => {
+    if (!s.pts.length) return;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    s.pts.forEach((p, i) => {
+      const x = xFor(p.t), y = yFor(p.v);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+function drawHydraulicChart() {
+  drawSeriesChart('pressureChartCanvas', [
+    { points: hydraulicSeries[1], color: '#3aa0ff' },
+    { points: hydraulicSeries[2], color: '#f2b53d' },
+  ]);
+}
+
+function drawHydrogenChart() {
+  drawSeriesChart('hydrogenChartCanvas', [
+    { points: hydrogenSeries.tank, color: '#35c26b' },
+    { points: hydrogenSeries.inter, color: '#b46cff' },
+    { points: hydrogenSeries.output, color: '#3ad1c5' },
+  ]);
+}
+
+function redrawCharts() {
+  drawHydraulicChart();
+  drawHydrogenChart();
+}
+
+// Both chart cards carry their own copy of the window-size buttons so
+// each stays readable on its own, but they share one chartWindowMs and
+// redraw together - matched by data-ms (not button identity) so
+// clicking either card's "30s" button highlights both.
+document.querySelectorAll('.window-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    chartWindowMs = parseInt(btn.dataset.ms, 10);
+    document.querySelectorAll('.window-btn').forEach(b => b.classList.toggle('selected', b.dataset.ms === btn.dataset.ms));
+    redrawCharts();
+  });
+});
+
+let chartResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer = setTimeout(redrawCharts, 150);
+});
+
+initI18n().then(() => {
+  document.title = t('manual_page_title');
+  document.getElementById('stage1Name').textContent = t('manual_stage1_name');
+  document.getElementById('stage2Name').textContent = t('manual_stage2_name');
+  document.getElementById('chartLegendS1').textContent = t('manual_stage1_name');
+  document.getElementById('chartLegendS2').textContent = t('manual_stage2_name');
+  setInterval(poll, 1000);
+  setInterval(pollDiagnostics, 400);
+  poll();
+  pollDiagnostics();
+});
+</script>
+
+</body>
+</html>

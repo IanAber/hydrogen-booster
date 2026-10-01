@@ -89,8 +89,12 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/admin.html", w.requireAuth(w.serveStatic("admin.html")))
 	mux.HandleFunc("/diagnostics.html", w.requireAuth(w.serveStatic("diagnostics.html")))
 	mux.HandleFunc("/history.html", w.requireAuth(w.serveStatic("history.html")))
+	mux.HandleFunc("/manual.html", w.requireAuth(w.serveStatic("manual.html")))
 	mux.HandleFunc("/api/diagnostics", w.requireAuth(w.handleDiagnostics))
 	mux.HandleFunc("/api/clearfault", w.requireAuth(w.handleClearFault))
+	mux.HandleFunc("/api/manual/enable", w.requireAuth(w.handleManualEnable))
+	mux.HandleFunc("/api/manual/pump", w.requireAuth(w.handleManualPump))
+	mux.HandleFunc("/api/manual/jog", w.requireAuth(w.handleManualJog))
 	mux.HandleFunc("/api/config", w.requireAuthUnlessLocalRead(w.handleConfig))
 	mux.HandleFunc("/api/can/status", w.requireAuth(w.handleCanStatus))
 	mux.HandleFunc("/api/can/sim", w.requireAuth(w.handleCanSim))
@@ -168,6 +172,91 @@ func (w *WebServer) handleClearFault(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.ctrl.ClearFault()
+	rw.WriteHeader(http.StatusOK)
+}
+
+type manualEnableRequest struct {
+	Enable bool `json:"enable"`
+}
+
+// handleManualEnable turns manual piston control on or off - see
+// Controller.SetManualMode. Current pressures and valve/pump states for
+// the manual page itself are read from the existing /api/diagnostics
+// endpoint rather than duplicated here.
+func (w *WebServer) handleManualEnable(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(rw, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req manualEnableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := w.ctrl.SetManualMode(req.Enable); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rw.WriteHeader(http.StatusOK)
+}
+
+type manualPumpRequest struct {
+	Stage int  `json:"stage"`
+	On    bool `json:"on"`
+}
+
+// handleManualPump turns one stage's hydraulic pump motor on or off
+// from the manual control page - see Controller.ManualSetPump.
+func (w *WebServer) handleManualPump(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(rw, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req manualPumpRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := w.ctrl.ManualSetPump(req.Stage, req.On); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rw.WriteHeader(http.StatusOK)
+}
+
+type manualJogRequest struct {
+	Stage     int    `json:"stage"`
+	Direction string `json:"direction"` // "up" or "down"
+	Active    bool   `json:"active"`    // true while the button is held, false on release
+}
+
+// handleManualJog drives one stage's direction/relief valves while its
+// Up/Down button is held on the manual control page - see
+// Controller.ManualJog.
+func (w *WebServer) handleManualJog(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(rw, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req manualJogRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(rw, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	var up bool
+	switch req.Direction {
+	case "up":
+		up = true
+	case "down":
+		up = false
+	default:
+		http.Error(rw, fmt.Sprintf("direction must be \"up\" or \"down\", got %q", req.Direction), http.StatusBadRequest)
+		return
+	}
+	if err := w.ctrl.ManualJog(req.Stage, up, req.Active); err != nil {
+		http.Error(rw, err.Error(), http.StatusBadRequest)
+		return
+	}
 	rw.WriteHeader(http.StatusOK)
 }
 

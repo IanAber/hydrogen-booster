@@ -27,7 +27,7 @@ var apiDocs = []apiEndpointDoc{
 	{
 		Method: "GET", Path: "/api/status", Auth: authPublicLocal,
 		Summary:  "Current job/sensor status, polled continuously by the customer and operator screens.",
-		Response: "phase, running, nozzle, targetPressureBar, targetMassKg, outputPressureBar, outputTempC, tankPressureBar, hydOilTempC, deliveredMassKg, stage1, stage2, ventOpen, faults, startedAt, elapsedSec",
+		Response: "phase, running, nozzle, targetPressureBar, targetMassKg, outputPressureBar, outputTempC, tankPressureBar, hydOilTempC, deliveredMassKg, stage1, stage2, ventOpen, faults, startedAt, elapsedSec, manualMode",
 	},
 	{
 		Method: "POST", Path: "/api/start", Auth: authPublicLocal,
@@ -52,6 +52,21 @@ var apiDocs = []apiEndpointDoc{
 	{
 		Method: "POST", Path: "/api/clearfault", Auth: authStaff,
 		Summary: "Acknowledge and clear a fault, returning to idle. No request body.",
+	},
+	{
+		Method: "POST", Path: "/api/manual/enable", Auth: authStaff,
+		Summary: "Enable or disable manual piston control. Enabling is refused while a job is running; both enabling and disabling return every manually-controlled output to its safe default (relief valves B/D open, direction valves A/C off, pumps off).",
+		Request: `{"enable":true}`,
+	},
+	{
+		Method: "POST", Path: "/api/manual/pump", Auth: authStaff,
+		Summary: "Turn one stage's hydraulic pump motor on or off. Only permitted while manual mode is enabled.",
+		Request: `{"stage":1, "on":true}`,
+	},
+	{
+		Method: "POST", Path: "/api/manual/jog", Auth: authStaff,
+		Summary: "Drive one stage's cylinder while its Up/Down button is held: active=true sets the direction valve, closing the relief valve immediately if that's already the current direction or after a ReverseDelay settling pause if it isn't; active=false re-opens the relief valve right away and cancels any pending settling pause. Only permitted while manual mode is enabled.",
+		Request: `{"stage":1, "direction":"up", "active":true}`,
 	},
 	{
 		Method: "GET, POST", Path: "/api/config", Auth: authStaff,

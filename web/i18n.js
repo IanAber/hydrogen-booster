@@ -21,7 +21,7 @@
 const I18N = {
   en: {
     nav_diagnostics: "Diagnostics", nav_admin: "Admin / Config", nav_dashboard: "Dashboard",
-    nav_api_docs: "API Docs", nav_history: "History",
+    nav_api_docs: "API Docs", nav_history: "History", nav_manual: "Manual Control",
 
     idx_page_title: "Hydrogen Booster Control", idx_job_setup: "Job Setup", idx_nozzle: "Nozzle",
     idx_final_pressure: "Final pressure (bar)", idx_amount_hydrogen: "Amount of hydrogen (kg)",
@@ -41,6 +41,7 @@ const I18N = {
     cust_fill_to_pressure: "Fill to pressure", cust_fill_kg: "Fill KG",
     cust_show_code: "Show", cust_hide_code: "Hide", cust_welcome: "Welcome",
     cust_code_not_found: "Code not recognised",
+    cust_manual_mode_active: "Manual control is active - automatic fills are unavailable.",
 
     admin_change_password: "Change Admin Password",
     admin_change_password_hint: "Applies immediately - you'll be asked to sign in again with the new password.",
@@ -66,6 +67,22 @@ const I18N = {
     common_simulation: "SIMULATION", common_up: "UP", common_down: "DOWN",
     phase_idle: "Idle", phase_filling: "Filling", phase_venting: "Venting",
     phase_complete: "Complete", phase_fault: "Fault",
+
+    manual_page_title: "Manual Piston Control", manual_mode_label: "Manual Control",
+    manual_enable_btn: "Enable Manual Control", manual_disable_btn: "Disable Manual Control",
+    manual_mode_on: "MANUAL", manual_mode_off: "AUTOMATIC",
+    manual_hint: "Enabling manual control lets you drive each cylinder's pump, direction and relief valves directly, and prevents an automatic fill from starting. Disabling returns every valve to its safe default (relief open, direction and pumps off).",
+    manual_blocked_running: "Cannot enable manual control while a job is running - stop the job first.",
+    manual_disabled_hint: "Enable manual control above to operate the pistons.",
+    manual_pump_motor: "Pump motor", manual_relief_valve: "Relief valve", manual_direction_valve: "Direction valve",
+    manual_hyd_pressure: "Hydraulic pressure", manual_up: "UP", manual_down: "DOWN",
+    manual_hold_hint: "Press and hold to drive the ram; release to stop. Reversing direction pauses briefly (relief valve stays open) before the ram moves.",
+    manual_stage1_name: "Stage 1 (A/B)", manual_stage2_name: "Stage 2 (C/D)",
+    manual_failed: "Failed:",
+    manual_pressure_chart: "Hydraulic Pressure", manual_chart_waiting: "Waiting for pressure data...",
+    manual_chart_now: "now",
+    manual_hydrogen_pressure_chart: "Hydrogen Pressure", manual_tank_pressure: "Storage tank pressure",
+    manual_interstage_pressure: "Inter-stage pressure", manual_output_pressure: "Output pressure",
 
     diag_page_title: "Live Diagnostics", diag_valves: "Valves/Relays", diag_sensors: "Sensors",
     diag_digital_inputs: "Digital Inputs",
@@ -139,7 +156,8 @@ const I18N = {
     admin_valve: "Valve", admin_port: "Relay",
     admin_apply: "Apply", admin_apply_save: "Apply & Save to File", admin_reload: "Reload from server",
     admin_config_file_in_use: "Config file in use:", admin_diagnostics_link: "Diagnostics",
-    admin_api_docs_link: "API Docs", admin_history_link: "History", docs_page_title: "API Documentation",
+    admin_api_docs_link: "API Docs", admin_history_link: "History", admin_manual_link: "Manual Control",
+    docs_page_title: "API Documentation",
     docs_page_hint: "Every HTTP endpoint this device serves. Endpoint names, request/response bodies and JSON field names below are not translated.",
     history_page_title: "History", history_from: "From", history_to: "To", history_load: "Load",
     history_range_1h: "1h", history_range_6h: "6h", history_range_24h: "24h", history_range_7d: "7d", history_range_30d: "30d",

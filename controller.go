@@ -52,6 +52,7 @@ type Status struct {
 	Faults            []string    `json:"faults,omitempty"`
 	StartedAt         *time.Time  `json:"startedAt,omitempty"`
 	ElapsedSec        float64     `json:"elapsedSec"`
+	ManualMode        bool        `json:"manualMode"`
 }
 
 // Controller is the top level supervisor: it runs the two Stages, keeps
@@ -104,6 +105,21 @@ type Controller struct {
 	// callers/tests that don't care about either keep working unchanged.
 	dispenseLog *DispenseLog
 	validCodes  *ValidCodes
+
+	// manualMode is set by SetManualMode, from the manual piston control
+	// page - see its doc comment.
+	manualMode bool
+
+	// manualReverse holds, per stage (index 0 = stage 1, index 1 =
+	// stage 2), whether a ManualJog press changed that stage's direction
+	// valve and is waiting out ReverseDelay before tickManualJog closes
+	// the relief valve - see ManualJog's doc comment.
+	manualReverse [2]manualReverseState
+}
+
+type manualReverseState struct {
+	pending  bool
+	deadline time.Time
 }
 
 // SetDispenseLog wires up recording of completed fills (see
@@ -149,6 +165,7 @@ func (c *Controller) Run() {
 		c.stages.Tick(now)
 		c.superviseSafety()
 		c.tickFans(now)
+		c.tickManualJog(now)
 		c.superviseJob()
 
 		if newPeriod := c.live.Snapshot().PollPeriod; newPeriod != period && newPeriod > 0 {
@@ -351,6 +368,9 @@ func setIORunning(io IO, running bool) {
 func (c *Controller) Start(job JobRequest) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.manualMode {
+		return fmt.Errorf("cannot start an automatic job while manual piston control is enabled")
+	}
 	if c.phase == PhaseFilling || c.phase == PhaseVenting {
 		return fmt.Errorf("job already running")
 	}
@@ -457,6 +477,166 @@ func (c *Controller) ClearFault() {
 	if c.phase == PhaseFault {
 		c.phase = PhaseIdle
 		c.faults = nil
+	}
+}
+
+// ManualMode reports whether manual piston control is currently
+// enabled (see SetManualMode).
+func (c *Controller) ManualMode() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.manualMode
+}
+
+// SetManualMode enables or disables the manual piston control page.
+// While enabled, the automatic job sequencer refuses to start (Start
+// above) - manual control and the automatic stage machine must never
+// drive the relays at once. Enabling is refused while a job is actually
+// running (Filling/Venting); it's allowed from every other phase,
+// including Fault, since manual control is also how an operator jogs a
+// stuck ram clear by hand.
+//
+// Both entering and leaving manual mode drive every manually-controlled
+// output to its safe default - relief valves B/D open, direction valves
+// A/C off, both pumps off - the same state Stages.Start's homing step
+// uses, so the system is always in a known state when manual control
+// starts or hands back to automatic.
+func (c *Controller) SetManualMode(enable bool) error {
+	c.mu.Lock()
+	if enable && (c.phase == PhaseFilling || c.phase == PhaseVenting) {
+		c.mu.Unlock()
+		return fmt.Errorf("cannot enable manual control while a job is running")
+	}
+	c.manualMode = enable
+	// Clear any pending reverse-delay close in the same critical section
+	// as the mode flip, so tickManualJog can never close a relief valve
+	// on behalf of a press that manual mode has already moved past.
+	c.manualReverse = [2]manualReverseState{}
+	c.mu.Unlock()
+
+	snap := c.live.Snapshot()
+	for _, cfg := range []StageConfig{snap.Stage1, snap.Stage2} {
+		_ = c.io.SetRelay(cfg.DirRelay, false)
+		_ = c.io.SetRelay(cfg.ReliefRelay, true)
+	}
+	_ = c.io.SetRelay(Pump1, false)
+	_ = c.io.SetRelay(Pump2, false)
+	return nil
+}
+
+// manualStageConfig resolves stage (1 or 2) to its StageConfig, shared
+// by ManualSetPump/ManualJog below.
+func (c *Controller) manualStageConfig(stage int) (StageConfig, error) {
+	snap := c.live.Snapshot()
+	switch stage {
+	case 1:
+		return snap.Stage1, nil
+	case 2:
+		return snap.Stage2, nil
+	default:
+		return StageConfig{}, fmt.Errorf("stage must be 1 or 2")
+	}
+}
+
+// ManualSetPump turns one stage's hydraulic pump motor on or off, from
+// the manual control page. Only permitted while manual mode is enabled.
+func (c *Controller) ManualSetPump(stage int, on bool) error {
+	if !c.ManualMode() {
+		return fmt.Errorf("manual control is not enabled")
+	}
+	var pump RelayOutput
+	switch stage {
+	case 1:
+		pump = Pump1
+	case 2:
+		pump = Pump2
+	default:
+		return fmt.Errorf("stage must be 1 or 2")
+	}
+	return c.io.SetRelay(pump, on)
+}
+
+// setManualReverse records (or clears) stage idx's (0 or 1) pending
+// reverse-delay state for tickManualJog.
+func (c *Controller) setManualReverse(idx int, pending bool, deadline time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.manualReverse[idx] = manualReverseState{pending: pending, deadline: deadline}
+}
+
+// ManualJog drives one stage's cylinder while its Up/Down button is
+// held, from the manual control page.
+//
+// active=true (button pressed) sets the stage's direction valve (A/C)
+// to the requested direction. If that's actually a change from the
+// valve's current position, the relief valve (B/D) is left open for
+// ReverseDelay - the same settling time the automatic sequencer gives
+// the direction valve between strokes, see Stages' doc comment - before
+// tickManualJog closes it to let hydraulic pressure drive the ram; if
+// the direction valve was already in the requested position, the relief
+// valve closes immediately, since no settling time is needed.
+// active=false (button released) re-opens the relief valve immediately
+// and cancels any pending reverse-delay close, stopping the ram; the
+// direction valve is left as last commanded, matching the automatic
+// sequencer's own between-strokes behaviour - it has no effect while
+// the relief valve is open. Only permitted while manual mode is
+// enabled.
+func (c *Controller) ManualJog(stage int, up bool, active bool) error {
+	return c.manualJogAt(stage, up, active, time.Now())
+}
+
+func (c *Controller) manualJogAt(stage int, up bool, active bool, now time.Time) error {
+	if !c.ManualMode() {
+		return fmt.Errorf("manual control is not enabled")
+	}
+	cfg, err := c.manualStageConfig(stage)
+	if err != nil {
+		return err
+	}
+	idx := stage - 1
+
+	if !active {
+		c.setManualReverse(idx, false, time.Time{})
+		return c.io.SetRelay(cfg.ReliefRelay, true)
+	}
+
+	wasUp, err := c.io.RelayState(cfg.DirRelay)
+	if err != nil {
+		return err
+	}
+	if err := c.io.SetRelay(cfg.DirRelay, up); err != nil {
+		return err
+	}
+	if wasUp == up {
+		c.setManualReverse(idx, false, time.Time{})
+		return c.io.SetRelay(cfg.ReliefRelay, false)
+	}
+
+	c.setManualReverse(idx, true, now.Add(cfg.ReverseDelay))
+	return nil
+}
+
+// tickManualJog closes a stage's relief valve once a pending
+// ManualJog-triggered direction reversal's ReverseDelay has elapsed -
+// called once per control-loop tick from Run(), the same cadence as
+// Stages.Tick/tickFans/superviseJob, so it needs no timer or goroutine
+// of its own. A no-op for a stage with nothing pending (the common
+// case, and always true outside manual mode - see SetManualMode, which
+// clears this state the instant manual mode changes).
+func (c *Controller) tickManualJog(now time.Time) {
+	for idx, stage := range [2]int{1, 2} {
+		c.mu.Lock()
+		st := c.manualReverse[idx]
+		c.mu.Unlock()
+		if !st.pending || now.Before(st.deadline) {
+			continue
+		}
+		cfg, err := c.manualStageConfig(stage)
+		if err != nil {
+			continue
+		}
+		c.setManualReverse(idx, false, time.Time{})
+		_ = c.io.SetRelay(cfg.ReliefRelay, false)
 	}
 }
 
@@ -626,6 +806,7 @@ func (c *Controller) Status() Status {
 	job := c.job
 	faults := append([]string{}, c.faults...)
 	frozenMass := c.finalDeliveredMassKg
+	manualMode := c.manualMode
 	var started *time.Time
 	if !c.startedAt.IsZero() {
 		t := c.startedAt
@@ -666,5 +847,6 @@ func (c *Controller) Status() Status {
 		Stage1:          s1,
 		Stage2:          s2,
 		VentOpen:        vent, Faults: faults, StartedAt: started, ElapsedSec: elapsed,
+		ManualMode: manualMode,
 	}
 }

@@ -675,3 +675,270 @@ func TestStartResetsFlowTotalizer(t *testing.T) {
 		t.Fatalf("ResetFlowTotal called %d times, want 1", fake.resetCalls)
 	}
 }
+
+func TestSetManualModeEnableRejectedWhileFilling(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	if err := c.Start(JobRequest{TargetPressureBar: 700, TargetMassKg: 999, Nozzle: Nozzle700}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetManualMode(true); err == nil {
+		t.Error("expected enabling manual mode to be rejected while a job is running")
+	}
+}
+
+func TestStartRejectedWhileManualModeEnabled(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	if err := c.SetManualMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Start(JobRequest{TargetPressureBar: 100, TargetMassKg: 1, Nozzle: Nozzle350}); err == nil {
+		t.Error("expected Start to be rejected while manual mode is enabled")
+	}
+}
+
+// TestSetManualModeDefaultsRelaysSafe confirms both the stage relief
+// valves (B/D) come up open and the direction valves/pumps come up off
+// on entering manual mode - the required manual-page starting state -
+// even if they were left in some other state by a prior job or fault.
+func TestSetManualModeDefaultsRelaysSafe(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Valve1A, true)
+	_ = io.SetRelay(Valve1B, false)
+	_ = io.SetRelay(Valve2A, true)
+	_ = io.SetRelay(Valve2B, false)
+	_ = io.SetRelay(Pump1, true)
+	_ = io.SetRelay(Pump2, true)
+
+	if err := c.SetManualMode(true); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := []struct {
+		relay RelayOutput
+		want  bool
+	}{
+		{Valve1A, false}, {Valve1B, true},
+		{Valve2A, false}, {Valve2B, true},
+		{Pump1, false}, {Pump2, false},
+	}
+	for _, chk := range checks {
+		got, err := io.RelayState(chk.relay)
+		if err != nil {
+			t.Fatalf("RelayState(%v): %v", chk.relay, err)
+		}
+		if got != chk.want {
+			t.Errorf("relay %v = %v, want %v", chk.relay, got, chk.want)
+		}
+	}
+}
+
+func TestManualSetPumpRejectedOutsideManualMode(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	if err := c.ManualSetPump(1, true); err == nil {
+		t.Error("expected ManualSetPump to be rejected while manual mode is disabled")
+	}
+}
+
+func TestManualSetPumpTogglesRequestedStage(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	if err := c.SetManualMode(true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.ManualSetPump(2, true); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := io.RelayState(Pump2); !on {
+		t.Error("Pump2 should be on")
+	}
+	if on, _ := io.RelayState(Pump1); on {
+		t.Error("Pump1 should remain off")
+	}
+}
+
+func TestManualSetPumpRejectsInvalidStage(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+
+	if err := c.ManualSetPump(3, true); err == nil {
+		t.Error("expected an error for an invalid stage number")
+	}
+}
+
+func TestManualJogRejectedOutsideManualMode(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	if err := c.ManualJog(1, true, true); err == nil {
+		t.Error("expected ManualJog to be rejected while manual mode is disabled")
+	}
+}
+
+// TestManualJogSameDirectionClosesReliefImmediately confirms that
+// pressing a jog button for the direction the valve is already in
+// (stage 2 defaults to "down" on entering manual mode - see
+// SetManualMode) closes the relief valve straight away, with no
+// reverse-delay wait, since the direction valve needs no time to
+// settle - while leaving the other stage untouched.
+func TestManualJogSameDirectionClosesReliefImmediately(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+
+	if err := c.ManualJog(2, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if dir, _ := io.RelayState(Valve2A); dir {
+		t.Error("Valve2A (stage 2 direction) should remain de-energised (down)")
+	}
+	if relief, _ := io.RelayState(Valve2B); relief {
+		t.Error("Valve2B (stage 2 relief) should be closed immediately - no direction change to settle")
+	}
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Error("stage 1's relief valve should be untouched (still open)")
+	}
+}
+
+// TestManualJogReleaseReopensRelief confirms releasing the button
+// re-opens the relief valve regardless of which direction was held.
+func TestManualJogReleaseReopensRelief(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+
+	if err := c.ManualJog(2, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if relief, _ := io.RelayState(Valve2B); relief {
+		t.Fatal("relief should be closed while held")
+	}
+	if err := c.ManualJog(2, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if relief, _ := io.RelayState(Valve2B); !relief {
+		t.Error("Valve2B (stage 2 relief) should re-open on release")
+	}
+}
+
+// TestManualJogDirectionChangeKeepsReliefOpenUntilReverseDelay confirms
+// that pressing a jog button for the OTHER direction (stage 1 defaults
+// to "down" on entering manual mode) sets the direction valve right
+// away but leaves the relief valve open until ReverseDelay has elapsed
+// - mirroring Stages.tickReversing's settling time for the automatic
+// sequencer - closing it only once tickManualJog sees the deadline has
+// passed.
+func TestManualJogDirectionChangeKeepsReliefOpenUntilReverseDelay(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+	reverseDelay := live.Snapshot().Stage1.ReverseDelay
+
+	t0 := time.Now()
+	if err := c.manualJogAt(1, true, true, t0); err != nil {
+		t.Fatal(err)
+	}
+	if dir, _ := io.RelayState(Valve1A); !dir {
+		t.Error("Valve1A (stage 1 direction) should be energised (up) immediately")
+	}
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Error("Valve1B (stage 1 relief) should still be open right after the direction change")
+	}
+
+	c.tickManualJog(t0.Add(reverseDelay - time.Millisecond))
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Error("Valve1B should still be open just before ReverseDelay elapses")
+	}
+
+	c.tickManualJog(t0.Add(reverseDelay + time.Millisecond))
+	if relief, _ := io.RelayState(Valve1B); relief {
+		t.Error("Valve1B should close once ReverseDelay has elapsed")
+	}
+}
+
+// TestManualJogReleaseBeforeReverseDelayCancelsPendingClose confirms
+// that releasing a jog button that changed direction - before
+// ReverseDelay elapses - cancels the pending close: a later
+// tickManualJog call for that deadline must not close the relief valve
+// out from under a press that already ended.
+func TestManualJogReleaseBeforeReverseDelayCancelsPendingClose(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+	reverseDelay := live.Snapshot().Stage1.ReverseDelay
+
+	t0 := time.Now()
+	if err := c.manualJogAt(1, true, true, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ManualJog(1, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Fatal("relief should have re-opened on release")
+	}
+
+	// The deadline from the original press, if still pending, would
+	// fall due right about now - confirm it doesn't fire.
+	c.tickManualJog(t0.Add(reverseDelay + time.Millisecond))
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Error("a cancelled reverse-delay close must not close the relief valve after release")
+	}
+}
+
+// TestSetManualModeClearsPendingReverseDelay confirms that leaving
+// manual mode while a reverse-delay close is pending (button still held
+// when Disable is clicked) discards it - tickManualJog must not re-close
+// the relief valve SetManualMode just forced open.
+func TestSetManualModeClearsPendingReverseDelay(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+	_ = c.SetManualMode(true)
+	reverseDelay := live.Snapshot().Stage1.ReverseDelay
+
+	t0 := time.Now()
+	if err := c.manualJogAt(1, true, true, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetManualMode(false); err != nil {
+		t.Fatal(err)
+	}
+
+	c.tickManualJog(t0.Add(reverseDelay + time.Millisecond))
+	if relief, _ := io.RelayState(Valve1B); !relief {
+		t.Error("Valve1B should remain open - SetManualMode's safe default, not re-closed by a stale pending reversal")
+	}
+}
