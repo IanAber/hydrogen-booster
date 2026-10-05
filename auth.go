@@ -16,7 +16,7 @@ import (
 // AdminUsername is the single shared login the operator/admin/diagnostics
 // screens use. There's no per-user account system - just one gate
 // separating staff from the public customer screen.
-const AdminUsername = "admin"
+const AdminUsername = "egadmin"
 
 // MinAdminPasswordLength is enforced only when an operator sets a new
 // password from the admin screen - the auto-generated bootstrap password
