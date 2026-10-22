@@ -100,6 +100,7 @@
     <a href="/diagnostics.html" data-i18n="admin_diagnostics_link">Diagnostics</a>
     <a href="/history.html" data-i18n="admin_history_link">History</a>
     <a href="/docs.html" data-i18n="admin_api_docs_link">API Docs</a>
+    <a href="/log.html" target="_blank" rel="noopener" data-i18n="admin_log_link">System Log</a>
     <a href="/operator.html">&larr; <span data-i18n="admin_back_dashboard">Back to dashboard</span></a>
   </div>
 </header>
@@ -123,6 +124,14 @@
       <input type="checkbox" id="massMeasurementEnabled" style="width:auto; height:18px; accent-color:var(--accent);">
       <span><strong data-i18n="admin_mass_measurement">Hydrogen mass measurement</strong> - <span data-i18n="admin_mass_measurement_hint">hint</span></span>
     </label>
+    <label style="display:flex; align-items:center; gap:10px; margin:10px 0 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="has700Bar" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_has_700">System has a 700 bar nozzle</strong> - <span data-i18n="admin_has_700_hint">hint</span></span>
+    </label>
+    <label style="display:flex; align-items:center; gap:10px; margin:10px 0 0; padding:12px; background:var(--panel2); border-radius:8px; cursor:pointer;">
+      <input type="checkbox" id="nozzleSensorsEnabled" style="width:auto; height:18px; accent-color:var(--accent);">
+      <span><strong data-i18n="admin_nozzle_sensors">Use nozzle proximity sensors</strong> - <span data-i18n="admin_nozzle_sensors_hint">hint</span></span>
+    </label>
   </div>
 
   <div class="card">
@@ -140,10 +149,10 @@
 
   <div class="card">
     <h2 data-i18n="admin_valid_codes">Valid Customer Codes</h2>
-    <p class="hint" data-i18n="admin_valid_codes_hint">One customer per line, as "code,Full Name". A customer's code must be listed here before a fill can start on the public screen.</p>
+    <p class="hint" data-i18n="admin_valid_codes_hint">One customer per line, as "code,customer ID,Full Name". A customer's code must be listed here before a fill can start on the public screen. Logs and dispense records show only the customer ID and name - codes are stored nowhere else.</p>
     <textarea id="validCodesText" rows="8" spellcheck="false"
       style="width:100%; padding:8px 10px; background:var(--panel2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-size:13px; font-family:ui-monospace, monospace; resize:vertical;"
-      placeholder="5551234567,Jane Doe"></textarea>
+      placeholder="5551234567,ACME-001,Jane Doe"></textarea>
     <div style="display:flex; gap:12px; align-items:center; margin-top:10px;">
       <button class="primary" onclick="saveCodes()" data-i18n="admin_save_codes">Save Codes</button>
       <button class="secondary" onclick="loadCodes()" data-i18n="admin_reload">Reload from server</button>
@@ -153,13 +162,18 @@
 
   <div class="card">
     <h2 data-i18n="admin_dispense_records">Dispense Records</h2>
-    <p class="hint" data-i18n="admin_dispense_records_hint">Fetching clears the stored records - intended for a billing/accounting system to poll periodically.</p>
-    <button class="primary" onclick="fetchRecords()" data-i18n="admin_fetch_records_btn">Fetch &amp; Clear Records</button>
+    <p class="hint" data-i18n="admin_dispense_records_hint">Completed fills are kept permanently. Leave a date blank for no limit; the "To" date is included.</p>
+    <div class="row2">
+      <div class="field"><label data-i18n="admin_records_from">From</label><input type="date" id="recordsFrom"></div>
+      <div class="field"><label data-i18n="admin_records_to">To</label><input type="date" id="recordsTo"></div>
+    </div>
+    <button class="primary" onclick="fetchRecords()" data-i18n="admin_fetch_records_btn">Show Records</button>
     <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:14px;">
       <thead>
         <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
           <th style="padding:6px 4px;" data-i18n="admin_record_time">Time</th>
-          <th style="padding:6px 4px;" data-i18n="admin_record_code">Customer Code</th>
+          <th style="padding:6px 4px;" data-i18n="admin_record_customer_id">Customer ID</th>
+          <th style="padding:6px 4px;" data-i18n="admin_record_customer_name">Customer</th>
           <th style="padding:6px 4px;" data-i18n="admin_record_mass">Delivered (kg)</th>
         </tr>
       </thead>
@@ -221,14 +235,21 @@
 
     <div class="card">
       <h2 data-i18n="admin_safety_interlocks">Safety Interlocks</h2>
-      <div class="field"><label><span data-i18n="admin_max_hyd_pressure">Max hydraulic pressure</span><span class="unit">bar</span></label>
-        <input type="number" id="maxHyd" min="0" step="1"></div>
-      <div class="field"><label><span data-i18n="admin_max_h2_pressure">Max hydrogen pressure</span><span class="unit">bar</span></label>
-        <input type="number" id="maxH2" min="0" step="1"></div>
-      <div class="field"><label><span data-i18n="admin_max_temperature">Max temperature</span><span class="unit">&deg;C</span></label>
-        <input type="number" id="maxTemp" min="0" step="1"></div>
+      <p class="hint" data-i18n="admin_sensor_limits_hint">The booster stops if any sensor reads outside its range, or can't be read at all. A minimum just below zero catches a broken sensor loop.</p>
+      <table style="width:100%; border-collapse:collapse; font-size:13px; margin-bottom:12px;">
+        <thead>
+          <tr style="color:var(--muted); text-align:left; border-bottom:1px solid var(--border);">
+            <th style="padding:6px 4px;" data-i18n="admin_sensor">Sensor</th>
+            <th style="padding:6px 4px;" data-i18n="admin_limit_min">Min</th>
+            <th style="padding:6px 4px;" data-i18n="admin_limit_max">Max</th>
+            <th style="padding:6px 4px;"></th>
+          </tr>
+        </thead>
+        <tbody id="sensorLimitRows"></tbody>
+      </table>
       <div class="field"><label><span data-i18n="admin_sensor_max_age">Sensor max age</span><span class="unit">ms</span></label>
         <input type="number" id="sensorAge" min="0" step="100"></div>
+      <p class="hint" data-i18n="admin_sensor_max_age_hint">A live sensor with no new reading for this long counts as unreadable. Never less than 3 poll periods of its module.</p>
     </div>
 
     <div class="card">
@@ -259,10 +280,10 @@
       <h2 data-i18n="admin_cooling_ventilation">Cooling / Ventilation</h2>
       <div class="field"><label><span data-i18n="admin_vent_fan_off_delay">Vent fan off delay</span><span class="unit">ms</span></label>
         <input type="number" id="ventFanOffDelay" min="0" step="100"></div>
-      <p class="hint" data-i18n="admin_vent_fan_off_delay_hint">VentFan energises the instant either pump runs, and stays energised this long after both pumps stop.</p>
+      <p class="hint" data-i18n="admin_vent_fan_off_delay_hint">VentFan energises the instant either pump runs or hydrogen is detected, and stays energised this long after both pumps stop and the detector clears.</p>
       <div class="field"><label><span data-i18n="admin_cooling_fan_setpoint">Cooling fan setpoint</span><span class="unit">&deg;C</span></label>
         <input type="number" id="coolingFanSetpoint" step="1"></div>
-      <p class="hint" data-i18n="admin_cooling_fan_setpoint_hint">CoolingFan turns on once hydraulic oil temperature exceeds this while the pumps are running, and stays on until it drops 1&deg;C below this - even after the pumps stop.</p>
+      <p class="hint" data-i18n="admin_cooling_fan_setpoint_hint">CoolingFan runs whenever either pump is running. It also turns on whenever hydraulic oil temperature exceeds this, even with the pumps stopped, and stays on until it drops 1&deg;C below this.</p>
     </div>
 
   </div>
@@ -469,6 +490,36 @@ function sensorOptions() {
   ];
 }
 
+// buildSensorLimitRows renders one min/max row per pressure and
+// temperature sensor, labelled the same way as the channel dropdowns.
+function buildSensorLimitRows(limits) {
+  const labels = {};
+  sensorOptions().concat(tempSensorOptions()).forEach(o => { if (o.value) labels[o.value] = o.label; });
+  const tbody = document.getElementById('sensorLimitRows');
+  tbody.innerHTML = '';
+  limits.forEach((l, i) => {
+    const unit = (l.sensor === 'HydOilTemp' || l.sensor === 'OutputTemp') ? '&deg;C' : 'bar';
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.dataset.sensor = l.sensor;
+    tr.innerHTML = `
+      <td style="padding:4px;">${labels[l.sensor] || l.sensor}</td>
+      <td style="padding:4px;"><input type="number" id="limit${i}min" step="any" value="${l.min}" style="width:90px;"></td>
+      <td style="padding:4px;"><input type="number" id="limit${i}max" step="any" value="${l.max}" style="width:90px;"></td>
+      <td style="padding:4px; color:var(--muted);">${unit}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function readSensorLimitRows() {
+  return Array.from(document.querySelectorAll('#sensorLimitRows tr')).map((tr, i) => ({
+    sensor: tr.dataset.sensor,
+    min: parseFloat(document.getElementById(`limit${i}min`).value),
+    max: parseFloat(document.getElementById(`limit${i}max`).value),
+  }));
+}
+
 function tempSensorOptions() {
   return [
     { value: '', label: t('opt_unused') },
@@ -647,6 +698,9 @@ function digitalInputOptions() {
     { value: 'HydraulicOilLevel', label: 'HydraulicOilLevel - ' + t('opt_hydraulic_oil_level') },
     { value: 'Motor1Powered', label: 'Motor1Powered - ' + t('opt_motor1_powered') },
     { value: 'Motor2Powered', label: 'Motor2Powered - ' + t('opt_motor2_powered') },
+    { value: 'HydrogenDetected', label: 'HydrogenDetected - ' + t('opt_hydrogen_detected') },
+    { value: 'Nozzle350InUse', label: 'Nozzle350InUse - ' + t('opt_nozzle350_in_use') },
+    { value: 'Nozzle700InUse', label: 'Nozzle700InUse - ' + t('opt_nozzle700_in_use') },
   ];
 }
 
@@ -676,7 +730,7 @@ function buildDigitalInputRows(channels) {
 
 function readDigitalInputRows() {
   const rows = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; document.getElementById(`digitalCh${i}en`); i++) {
     rows.push({
       enabled: document.getElementById(`digitalCh${i}en`).checked,
       assigned: document.getElementById(`digitalCh${i}assigned`).value,
@@ -741,6 +795,8 @@ async function load() {
       setLanguage(c.language);
     }
     document.getElementById('massMeasurementEnabled').checked = c.massMeasurementEnabled;
+    document.getElementById('has700Bar').checked = !c.nozzles || c.nozzles.has700Bar !== false;
+    document.getElementById('nozzleSensorsEnabled').checked = !!(c.nozzles && c.nozzles.sensorsEnabled);
 
     document.getElementById('s1name').textContent = c.stage1.name;
     setv('s1min', c.stage1.minStrokeTimeMs);
@@ -758,9 +814,7 @@ async function load() {
     setv('s2pulse', c.stage2.reverseDelayMs);
     setv('s2filter', c.stage2.pressureFilterSamples);
 
-    setv('maxHyd', c.safety.maxHydraulicPressureBar);
-    setv('maxH2', c.safety.maxHydrogenPressureBar);
-    setv('maxTemp', c.safety.maxTempC);
+    buildSensorLimitRows(c.safety.sensorLimits || []);
     setv('sensorAge', c.safety.sensorMaxAgeMs);
 
     setv('tankVol', c.tank.volumeLitres);
@@ -833,7 +887,9 @@ function onLanguageChange(lang) {
   const tempRows = readTempChannelRows();
   const relayRows = readRelayChannelRows();
   const digitalRows = readDigitalInputRows();
+  const limitRows = readSensorLimitRows();
   setLanguage(lang);
+  buildSensorLimitRows(limitRows);
   buildCanChannelRows(canRows);
   buildTempChannelRows(tempRows);
   buildRelayChannelRows(relayRows);
@@ -848,6 +904,10 @@ async function apply(persist) {
     systemName: v('systemName'),
     language: v('languageSelect'),
     massMeasurementEnabled: document.getElementById('massMeasurementEnabled').checked,
+    nozzles: {
+      has700Bar: document.getElementById('has700Bar').checked,
+      sensorsEnabled: document.getElementById('nozzleSensorsEnabled').checked,
+    },
     pollPeriodMs: int('pollPeriod'),
     stage1: {
       name: document.getElementById('s1name').textContent,
@@ -867,9 +927,7 @@ async function apply(persist) {
     pressureBlankTimeMs: int('pressureBlank'),
     outputPressureFilterSamples: int('outputPressureFilter'),
     safety: {
-      maxHydraulicPressureBar: num('maxHyd'),
-      maxHydrogenPressureBar: num('maxH2'),
-      maxTempC: num('maxTemp'),
+      sensorLimits: readSensorLimitRows(),
       sensorMaxAgeMs: int('sensorAge'),
     },
     tank: {
@@ -1123,6 +1181,11 @@ function sendDigitalSimValue(signalName, high) {
 // rather than a generic High/Low level:
 //  - HydraulicOilLevel: Low (red) when high/insufficient, OK (green)
 //    when low/sufficient - matches the safety check in superviseSafety.
+//  - Nozzle350InUse/Nozzle700InUse: Lifted (green) when high, Returned
+//    when low.
+//  - HydrogenDetected: Detected (red) when high, Clear (green) when low
+//    - high runs VentFan (see Controller.tickFans) and emergency-stops
+//    the booster (see superviseSafety).
 //  - Motor1Powered/Motor2Powered: compared against their pump's current
 //    relay state (pumpsOn, from /api/diagnostics) - active-low
 //    feedback, so Run (green) is pump on with input low, Stopped (no
@@ -1138,6 +1201,12 @@ function digitalStatusLabel(c, pumpsOn, live) {
   if (live && !c.ok) return { text: t('admin_fault_word'), cls: 'comms-bad' };
   if (c.assigned === 'HydraulicOilLevel') {
     return c.high ? { text: t('admin_oil_low'), cls: 'comms-bad' } : { text: t('admin_oil_ok'), cls: 'comms-ok' };
+  }
+  if (c.assigned === 'Nozzle350InUse' || c.assigned === 'Nozzle700InUse') {
+    return c.high ? { text: t('admin_nozzle_lifted'), cls: 'comms-ok' } : { text: t('admin_nozzle_returned'), cls: '' };
+  }
+  if (c.assigned === 'HydrogenDetected') {
+    return c.high ? { text: t('admin_h2_detected'), cls: 'comms-bad' } : { text: t('admin_h2_clear'), cls: 'comms-ok' };
   }
   const pumpName = c.assigned === 'Motor1Powered' ? 'Pump1' : c.assigned === 'Motor2Powered' ? 'Pump2' : null;
   if (pumpName && pumpsOn && (pumpName in pumpsOn)) {
@@ -1307,12 +1376,12 @@ async function changePassword() {
 }
 
 // --- Valid customer codes (allow-list) ---
-// Edited as plain "code,Full Name" lines rather than a generated table,
+// Edited as plain "code,customer ID,Full Name" lines rather than a generated table,
 // matching the file format on disk (ValidCodes.SetAll/List in records.go)
 // so what's on screen looks like what's in the file.
 
 function codesToText(entries) {
-  return entries.map(e => e.code + ',' + e.name).join('\n');
+  return entries.map(e => e.code + ',' + e.customerId + ',' + e.name).join('\n');
 }
 
 function textToCodes(text) {
@@ -1320,10 +1389,9 @@ function textToCodes(text) {
     .map(line => line.trim())
     .filter(line => line !== '' && !line.startsWith('#'))
     .map(line => {
-      const idx = line.indexOf(',');
-      return idx === -1
-        ? { code: line.trim(), name: '' }
-        : { code: line.slice(0, idx).trim(), name: line.slice(idx + 1).trim() };
+      // The name is last, so it may itself contain commas.
+      const [code = '', customerId = '', ...name] = line.split(',');
+      return { code: code.trim(), customerId: customerId.trim(), name: name.join(',').trim() };
     });
 }
 
@@ -1364,16 +1432,27 @@ async function saveCodes() {
 }
 
 // --- Dispense records ---
-// GET /api/records both returns and clears the file (DispenseLog.DrainAll)
-// - each fetch here is a real drain, not a refreshable view, so the
-// records are rendered locally rather than re-fetched on any timer.
+// GET /api/records reads the dispense database for a date range -
+// records are never removed, so this is a plain read-only view.
 
 async function fetchRecords() {
   const msg = document.getElementById('recordsMsg');
   const tbody = document.getElementById('dispenseRecordRows');
   msg.textContent = ''; msg.className = 'hint';
   try {
-    const res = await fetch('/api/records');
+    const params = new URLSearchParams();
+    const from = document.getElementById('recordsFrom').value;
+    const to = document.getElementById('recordsTo').value;
+    if (from) params.set('from', from);
+    if (to) {
+      // The API's "to" is exclusive - send the day after so the chosen
+      // end date is included.
+      const d = new Date(to + 'T00:00:00');
+      d.setDate(d.getDate() + 1);
+      params.set('to', d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'));
+    }
+    const res = await fetch('/api/records?' + params);
+    if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
     const records = data.records || [];
     tbody.innerHTML = '';
@@ -1384,12 +1463,12 @@ async function fetchRecords() {
     records.forEach(r => {
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid var(--border)';
-      const time = new Date(r.timestamp).toLocaleString();
-      tr.innerHTML = `
-        <td style="padding:6px 4px;">${time}</td>
-        <td style="padding:6px 4px;">${r.customerCode}</td>
-        <td style="padding:6px 4px;">${r.deliveredMassKg.toFixed(3)}</td>
-      `;
+      [new Date(r.timestamp).toLocaleString(), r.customerId || '-', r.customerName || '', r.deliveredMassKg.toFixed(3)].forEach(text => {
+        const td = document.createElement('td');
+        td.style.padding = '6px 4px';
+        td.textContent = text;
+        tr.appendChild(td);
+      });
       tbody.appendChild(tr);
     });
   } catch (e) {

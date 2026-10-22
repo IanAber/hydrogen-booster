@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -69,6 +70,7 @@ type SerialPort interface {
 type FlowModule struct {
 	live   *LiveConfig
 	openFn func(path string, baud int) (SerialPort, error)
+	errLog errorLatch // logs connect/poll failures once each, and their recovery
 
 	// portMu serializes every command/response round trip over the
 	// port - both the poll loop and a synchronous ResetTotal() call
@@ -125,7 +127,7 @@ func (m *FlowModule) Run() {
 		}
 
 		if err := m.ensureConnected(cfg.FlowModule); err != nil {
-			log.Printf("Flow module: %v", err)
+			m.errLog.report("Flow module", err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -284,13 +286,16 @@ func (m *FlowModule) pollOnce(cfg FlowModuleConfig) {
 	defer m.mu.Unlock()
 	if err != nil {
 		m.lastErr = err.Error()
+		m.errLog.report("Flow module", err)
 		return
 	}
 	v, perr := strconv.ParseFloat(resp, 64)
 	if perr != nil {
 		m.lastErr = fmt.Sprintf("unexpected totalizer response %q", resp)
+		m.errLog.report("Flow module", errors.New(m.lastErr))
 		return
 	}
+	m.errLog.report("Flow module", nil)
 	m.haveTotal = true
 	m.lastTotalKg = v
 	m.lastErr = ""

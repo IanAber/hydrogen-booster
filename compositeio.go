@@ -69,33 +69,33 @@ func (c *CompositeIO) RelayState(r RelayOutput) (bool, error) {
 	return c.base.RelayState(r)
 }
 
-// ReadPressureBar serves the CAN pressure module's reading for any
-// sensor assigned to one of its enabled channels, and falls back to the
-// base IO (still simulated, pending future real drivers) for anything
-// not wired to it.
+// ReadPressureBar serves the CAN pressure module's reading whenever
+// that module is responsible for s - every pressure sensor while it's
+// live, including its error if the reading is missing or stale - and
+// only falls back to the base IO (simulated) otherwise. A live sensor
+// that stops reading must surface as an error, never as a plausible
+// simulated value.
 func (c *CompositeIO) ReadPressureBar(s SensorInput) (float64, error) {
-	if v, ok := c.pm.ReadPressureBar(s); ok {
-		return v, nil
+	if v, handled, err := c.pm.readForIO(s); handled {
+		return v, err
 	}
 	return c.base.ReadPressureBar(s)
 }
 
-// ReadTempC serves the 1-Wire temperature module's reading for any
-// sensor assigned to one of its enabled channels, and falls back to the
-// base IO (still simulated) for anything not wired to it.
+// ReadTempC follows the same rules as ReadPressureBar, for the 1-Wire
+// temperature module.
 func (c *CompositeIO) ReadTempC(s SensorInput) (float64, error) {
-	if v, ok := c.tm.ReadTempC(s); ok {
-		return v, nil
+	if v, handled, err := c.tm.readForIO(s); handled {
+		return v, err
 	}
 	return c.base.ReadTempC(s)
 }
 
-// ReadDigitalInput serves the digital input module's reading for any
-// signal assigned to one of its enabled channels, and falls back to the
-// base IO (simulated) for anything not wired to it.
+// ReadDigitalInput follows the same rules as ReadPressureBar, for the
+// GPIO digital input module.
 func (c *CompositeIO) ReadDigitalInput(d DigitalInput) (bool, error) {
-	if v, ok := c.dim.ReadDigitalInput(d); ok {
-		return v, nil
+	if v, handled, err := c.dim.readForIO(d); handled {
+		return v, err
 	}
 	return c.base.ReadDigitalInput(d)
 }

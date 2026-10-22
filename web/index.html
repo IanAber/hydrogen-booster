@@ -170,9 +170,10 @@
       <button id="nozzle350" onclick="selectNozzle(350)">350 Bar</button>
       <button id="nozzle700" onclick="selectNozzle(700)">700 Bar</button>
     </div>
+    <div class="hint" id="nozzleHint"></div>
 
     <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
-    <input type="number" id="targetPressure" min="1" step="1" value="350">
+    <input type="number" id="targetPressure" min="1" max="700" step="1" value="350" onchange="clampTargetPressure()">
 
     <div id="massAmountGroup">
       <label data-i18n="cust_amount">Amount (kg)</label>
@@ -206,6 +207,7 @@
       <button class="danger" id="stopBtn" onclick="stopJob()" data-i18n="idx_stop" disabled>Stop</button>
     </div>
     <div class="error" id="errorMsg"></div>
+    <div class="error" id="faultMsg" style="white-space:pre-line;"></div>
     <div class="hint" id="manualModeNotice" style="display:none; color:var(--warn);" data-i18n="cust_manual_mode_active">Manual control is active - automatic fills are unavailable.</div>
   </div>
 
@@ -337,6 +339,50 @@ function selectNozzle(n) {
 }
 selectNozzle(350);
 
+// --- Nozzle options (from /api/status's "nozzles") ---------------------
+// has700Bar: offer the 700 bar nozzle at all, and cap the pressure field
+// at 350 when it's not fitted. sensorsEnabled: the nozzle is picked by
+// the holster proximity sensors, not these buttons - they become
+// read-only indicators of the lifted nozzle (detected; 0 = none, with
+// problem explaining why).
+let nozzleStatus = { has700Bar: true, sensorsEnabled: false, detected: 0 };
+
+function applyNozzleStatus(ns) {
+  if (!ns) return;
+  const prevDetected = nozzleStatus.detected;
+  nozzleStatus = ns;
+  document.getElementById('nozzle700').style.display = ns.has700Bar ? '' : 'none';
+  const maxBar = ns.has700Bar ? 700 : 350;
+  const p = document.getElementById('targetPressure');
+  p.max = maxBar;
+  if (parseFloat(p.value) > maxBar) p.value = maxBar;
+
+  if (ns.sensorsEnabled) {
+    // Follow the lifted nozzle - only re-select on a change, so a
+    // pressure the user typed isn't overwritten on every poll.
+    if (ns.detected && ns.detected !== prevDetected) selectNozzle(ns.detected);
+    document.getElementById('nozzle350').classList.toggle('selected', ns.detected === 350);
+    document.getElementById('nozzle700').classList.toggle('selected', ns.detected === 700);
+    document.getElementById('nozzleHint').textContent = ns.detected ? t('idx_nozzle_auto_hint') : translateMessage(ns.problem);
+  } else {
+    if (!ns.has700Bar && selectedNozzle === 700) selectNozzle(350);
+    document.getElementById('nozzleHint').textContent = '';
+  }
+}
+
+// activeNozzle is the nozzle a start request uses - the lifted one when
+// sensors decide (0 = none, so Start stays disabled), else the button.
+function activeNozzle() {
+  return nozzleStatus.sensorsEnabled ? nozzleStatus.detected : selectedNozzle;
+}
+
+// clampTargetPressure keeps a typed pressure within the nozzle's rating.
+function clampTargetPressure() {
+  const p = document.getElementById('targetPressure');
+  const max = activeNozzle() || 350;
+  if (parseFloat(p.value) > max) p.value = max;
+}
+
 function selectPreset(kg) {
   document.getElementById('targetMass').value = kg;
   document.querySelectorAll('.preset-group button').forEach(b => {
@@ -442,7 +488,7 @@ function updateButtonStates() {
   }
   wasJobRunning = jobRunning;
 
-  const canStart = codeValid() && !jobRunning && !manualModeActive;
+  const canStart = codeValid() && !jobRunning && !manualModeActive && !!activeNozzle();
   document.getElementById('startBtn').disabled = !canStart;
   document.getElementById('fillPressureBtn').disabled = !canStart;
   document.getElementById('stopBtn').disabled = !jobRunning;
@@ -451,8 +497,8 @@ function updateButtonStates() {
   // Lock every other control while a fill is in progress, leaving only
   // Stop available - nozzle, amount, code, etc. shouldn't be changeable
   // out from under a job that's already running.
-  document.getElementById('nozzle350').disabled = jobRunning;
-  document.getElementById('nozzle700').disabled = jobRunning;
+  document.getElementById('nozzle350').disabled = jobRunning || nozzleStatus.sensorsEnabled;
+  document.getElementById('nozzle700').disabled = jobRunning || nozzleStatus.sensorsEnabled;
   document.getElementById('targetPressure').disabled = jobRunning;
   document.getElementById('targetMass').disabled = jobRunning;
   document.getElementById('customerCode').disabled = jobRunning;
@@ -473,7 +519,7 @@ async function postStart(body) {
   document.getElementById('errorMsg').textContent = '';
   const res = await fetch('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (!res.ok) {
-    document.getElementById('errorMsg').textContent = await res.text();
+    document.getElementById('errorMsg').textContent = await responseErrorText(res);
   }
 }
 
@@ -484,7 +530,7 @@ async function startJob() {
     // stale DOM value must never be read; every fill is pressure-only,
     // the same uncapped mass target fillToPressure() below always uses.
     targetMassKg: massMeasurementEnabled ? parseFloat(document.getElementById('targetMass').value) : 999,
-    nozzle: selectedNozzle,
+    nozzle: activeNozzle(),
     // With mass measurement disabled, the code field is hidden and
     // nothing needs a code to record against - never read its stale
     // DOM value.
@@ -498,9 +544,9 @@ async function startJob() {
 // stops on reaching that pressure (or Stop).
 async function fillToPressure() {
   await postStart({
-    targetPressureBar: selectedNozzle,
+    targetPressureBar: activeNozzle(),
     targetMassKg: 999,
-    nozzle: selectedNozzle,
+    nozzle: activeNozzle(),
     customerCode: massMeasurementEnabled ? document.getElementById('customerCode').value : '',
   });
 }
@@ -518,6 +564,14 @@ const phaseKeys = {
   complete: 'phase_complete', fault: 'phase_fault'
 };
 
+// activeFaultText lists the current faults in the operator's language,
+// one per line, or '' when not faulted - so the operator can see which
+// sensor stopped the booster.
+function activeFaultText(s) {
+  if (s.phase !== 'fault') return '';
+  return faultMessages(s).join('\n');
+}
+
 function fmt(n, d=1) { return (typeof n === 'number') ? n.toFixed(d) : '--'; }
 
 async function poll() {
@@ -529,6 +583,7 @@ async function poll() {
     pill.textContent = t(phaseKeys[s.phase] || s.phase);
     pill.style.background = phaseColors[s.phase] || '#26323b';
     pill.style.color = (s.phase === 'idle') ? 'var(--text)' : '#08131c';
+    document.getElementById('faultMsg').textContent = activeFaultText(s);
 
     document.getElementById('outP').textContent = fmt(s.outputPressureBar) + ' bar';
     document.getElementById('elapsedVal').textContent = s.startedAt ? fmt(s.elapsedSec, 0) + ' s' : '--';
@@ -540,6 +595,7 @@ async function poll() {
 
     jobRunning = (s.phase === 'filling' || s.phase === 'venting');
     manualModeActive = !!s.manualMode;
+    applyNozzleStatus(s.nozzles);
     updateButtonStates();
   } catch (e) {
     console.error(e);

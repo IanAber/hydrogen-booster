@@ -84,7 +84,11 @@ type TemperatureModule struct {
 	cLive      map[SensorInput]float64
 	cSim       map[SensorInput]float64
 	lastErr    map[SensorInput]string
+	lastGood   map[SensorInput]time.Time // per-sensor time of the last successful read
 	lastUpdate time.Time
+	liveSince  time.Time // when live data was last switched on; zero while in simulation
+
+	errLogs map[SensorInput]*errorLatch // per-sensor read failure logging, see errorLatch
 
 	stop chan struct{}
 }
@@ -94,12 +98,13 @@ type TemperatureModule struct {
 // driver; tests pass a fake instead.
 func NewTemperatureModule(live *LiveConfig, readFn func(deviceID string) (float64, error)) *TemperatureModule {
 	return &TemperatureModule{
-		live:    live,
-		readFn:  readFn,
-		cLive:   map[SensorInput]float64{},
-		cSim:    map[SensorInput]float64{},
-		lastErr: map[SensorInput]string{},
-		stop:    make(chan struct{}),
+		live:     live,
+		readFn:   readFn,
+		cLive:    map[SensorInput]float64{},
+		cSim:     map[SensorInput]float64{},
+		lastErr:  map[SensorInput]string{},
+		lastGood: map[SensorInput]time.Time{},
+		stop:     make(chan struct{}),
 	}
 }
 
@@ -121,12 +126,18 @@ func (m *TemperatureModule) Run() {
 				log.Printf("Temperature module: live data OFF - current readings loaded into simulator")
 			}
 			wasLive = false
+			m.mu.Lock()
+			m.liveSince = time.Time{}
+			m.mu.Unlock()
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
 		if !wasLive {
 			log.Printf("Temperature module: live data ON")
+			m.mu.Lock()
+			m.liveSince = time.Now()
+			m.mu.Unlock()
 		}
 		wasLive = true
 
@@ -147,14 +158,29 @@ func (m *TemperatureModule) pollOnce(cfg TempModuleConfig) {
 			continue
 		}
 		v, err := m.readFn(ch.DeviceID)
+		m.errLog(ch.Assigned).report(fmt.Sprintf("Temperature module (1-Wire) %s [%s]", ch.Assigned, ch.DeviceID), err)
 		if err != nil {
 			m.lastErr[ch.Assigned] = err.Error()
 			continue
 		}
 		m.cLive[ch.Assigned] = v
+		m.lastGood[ch.Assigned] = time.Now()
 		delete(m.lastErr, ch.Assigned)
 	}
 	m.lastUpdate = time.Now()
+}
+
+// errLog returns sensor's errorLatch; callers hold m.mu.
+func (m *TemperatureModule) errLog(sensor SensorInput) *errorLatch {
+	if m.errLogs == nil {
+		m.errLogs = map[SensorInput]*errorLatch{}
+	}
+	l, ok := m.errLogs[sensor]
+	if !ok {
+		l = &errorLatch{}
+		m.errLogs[sensor] = l
+	}
+	return l
 }
 
 // snapshotToSim copies the last known live value for every assigned
@@ -194,6 +220,33 @@ func (m *TemperatureModule) ReadTempC(sensor SensorInput) (value float64, ok boo
 	}
 	v, ok := m.cSim[sensor]
 	return v, ok
+}
+
+// readForIO is CompositeIO's view of a reading - see
+// PressureModule.readForIO; the same rules apply to every temperature
+// sensor while this module is live.
+func (m *TemperatureModule) readForIO(sensor SensorInput) (value float64, handled bool, err error) {
+	snap := m.live.Snapshot()
+	cfg := snap.TempModule
+	if !cfg.LiveEnabled {
+		v, ok := m.ReadTempC(sensor)
+		return v, ok, nil
+	}
+	idx, assigned := m.assignedChannel(cfg, sensor)
+	if !assigned {
+		return 0, true, msgErr("not_assigned_onewire", nil, "not assigned to an enabled 1-Wire channel")
+	}
+	if cfg.Channels[idx].DeviceID == "" {
+		return 0, true, msgErr("no_onewire_device", nil, "no 1-Wire device selected")
+	}
+	maxAge := sensorMaxAge(snap.Safety.SensorMaxAge, cfg.PollPeriod)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, has := m.cLive[sensor]
+	if err := liveReadingErr(has, m.lastGood[sensor], m.liveSince, maxAge, m.lastErr[sensor]); err != nil {
+		return 0, true, err
+	}
+	return v, true, nil
 }
 
 // SetSimValue adjusts one channel's simulated value in real time (e.g.

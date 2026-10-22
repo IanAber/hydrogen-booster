@@ -10,6 +10,15 @@ Restart=on-failure
 RestartSec=5
 User=egadmin
 
+# Log output goes to the systemd journal, with faults and failures at
+# priority "err" and rejected commands at "warning":
+#   journalctl -u hydrogen-booster -f            follow live
+#   journalctl -u hydrogen-booster -p warning    problems only
+#   journalctl -u hydrogen-booster --since today
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hydrogen-booster
+
 # Raw SocketCAN access without running as root.
 AmbientCapabilities=CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_RAW

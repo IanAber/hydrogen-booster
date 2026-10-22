@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 // TestCanModuleSurvivesFileRoundTrip confirms the CAN module's channel
 // assignment and calibration - the whole point of persisting config to
@@ -80,7 +84,7 @@ func TestDigitalInputModuleSurvivesFileRoundTrip(t *testing.T) {
 	base := DefaultConfig()
 	base.DigitalInputModule.Chip = "/dev/gpiochip3"
 	base.DigitalInputModule.LiveEnabled = true
-	base.DigitalInputModule.Channels[0].Port = 13
+	base.DigitalInputModule.Channels[0].Port = 16
 
 	if err := SaveConfigFile(path, base); err != nil {
 		t.Fatal(err)
@@ -96,10 +100,45 @@ func TestDigitalInputModuleSurvivesFileRoundTrip(t *testing.T) {
 	if !loaded.DigitalInputModule.LiveEnabled {
 		t.Error("LiveEnabled did not round-trip as true")
 	}
-	if loaded.DigitalInputModule.Channels[0].Port != 13 {
-		t.Errorf("Channels[0].Port = %v, want 13", loaded.DigitalInputModule.Channels[0].Port)
+	if loaded.DigitalInputModule.Channels[0].Port != 16 {
+		t.Errorf("Channels[0].Port = %v, want 16", loaded.DigitalInputModule.Channels[0].Port)
 	}
 	if loaded.DigitalInputModule.Channels[0].Assigned != HydraulicOilLevel {
 		t.Errorf("Channels[0].Assigned = %v, want HydraulicOilLevel", loaded.DigitalInputModule.Channels[0].Assigned)
+	}
+}
+
+// TestDigitalInputModuleLoadsOlderConfigWithFewerChannels checks that a
+// config file saved before HydrogenDetected existed (3 digital input
+// channels) still loads, with the missing slot left disabled, instead
+// of failing validation and dropping every saved setting.
+func TestDigitalInputModuleLoadsOlderConfigWithFewerChannels(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.json"
+
+	base := DefaultConfig()
+	base.CoolingFan.SetpointC = 61
+	dto := ToDTO(base)
+	dto.DigitalInputModule.Channels = dto.DigitalInputModule.Channels[:3]
+	data, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, ok, err := LoadConfigFile(path, DefaultConfig())
+	if err != nil || !ok {
+		t.Fatalf("load failed: ok=%v err=%v", ok, err)
+	}
+	if loaded.CoolingFan.SetpointC != 61 {
+		t.Errorf("CoolingFan.SetpointC = %v, want 61", loaded.CoolingFan.SetpointC)
+	}
+	if loaded.DigitalInputModule.Channels[2].Assigned != Motor2Powered {
+		t.Errorf("Channels[2].Assigned = %v, want Motor2Powered", loaded.DigitalInputModule.Channels[2].Assigned)
+	}
+	if loaded.DigitalInputModule.Channels[3].Enabled {
+		t.Error("Channels[3] should be disabled when missing from the file")
 	}
 }

@@ -1,5 +1,9 @@
 {
   "massMeasurementEnabled": false,
+  "nozzles": {
+    "has700Bar": true,
+    "sensorsEnabled": false
+  },
   "pollPeriodMs": 100,
   "stage1": {
     "name": "Stage 1 (A/B)",
@@ -25,9 +29,15 @@
   "pressureBlankTimeMs": 0,
   "outputPressureFilterSamples": 1,
   "safety": {
-    "maxHydraulicPressureBar": 25,
-    "maxHydrogenPressureBar": 750,
-    "maxTempC": 85,
+    "sensorLimits": [
+      {"sensor": "Hyd1Pressure", "min": -1, "max": 25},
+      {"sensor": "Hyd2Pressure", "min": -1, "max": 25},
+      {"sensor": "TankPressure", "min": -1, "max": 300},
+      {"sensor": "InterStagePressure", "min": -1, "max": 500},
+      {"sensor": "OutputPressure", "min": -1, "max": 750},
+      {"sensor": "HydOilTemp", "min": -30, "max": 85},
+      {"sensor": "OutputTemp", "min": -30, "max": 85}
+    ],
     "sensorMaxAgeMs": 2000
   },
   "tank": {
@@ -90,7 +100,10 @@
     "channels": [
       {"enabled": true, "assigned": "HydraulicOilLevel", "port": 2},
       {"enabled": true, "assigned": "Motor1Powered", "port": 3},
-      {"enabled": true, "assigned": "Motor2Powered", "port": 5}
+      {"enabled": true, "assigned": "Motor2Powered", "port": 5},
+      {"enabled": true, "assigned": "HydrogenDetected", "port": 6},
+      {"enabled": true, "assigned": "Nozzle350InUse", "port": 12},
+      {"enabled": true, "assigned": "Nozzle700InUse", "port": 13}
     ]
   },
   "flowModule": {

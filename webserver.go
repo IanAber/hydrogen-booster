@@ -9,30 +9,31 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type WebServer struct {
-	ctrl        *Controller
-	live        *LiveConfig
-	pm          *PressureModule
-	tm          *TemperatureModule
-	dim         *DigitalInputModule
-	fm          *FlowModule
-	history     *HistoryStore
-	listenAddr  string
-	configPath  string
-	webDir      string
-	auth        *AdminAuth
-	dispenseLog *DispenseLog
-	validCodes  *ValidCodes
+	ctrl       *Controller
+	live       *LiveConfig
+	pm         *PressureModule
+	tm         *TemperatureModule
+	dim        *DigitalInputModule
+	fm         *FlowModule
+	history    *HistoryStore
+	listenAddr string
+	configPath string
+	webDir     string
+	auth       *AdminAuth
+	dispenses  *DispenseStore
+	validCodes *ValidCodes
 }
 
-func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, fm *FlowModule, history *HistoryStore, listenAddr, configPath, webDir string, auth *AdminAuth, dispenseLog *DispenseLog, validCodes *ValidCodes) *WebServer {
+func NewWebServer(ctrl *Controller, live *LiveConfig, pm *PressureModule, tm *TemperatureModule, dim *DigitalInputModule, fm *FlowModule, history *HistoryStore, listenAddr, configPath, webDir string, auth *AdminAuth, dispenses *DispenseStore, validCodes *ValidCodes) *WebServer {
 	return &WebServer{
 		ctrl: ctrl, live: live, pm: pm, tm: tm, dim: dim, fm: fm, history: history,
 		listenAddr: listenAddr, configPath: configPath, webDir: webDir,
-		auth: auth, dispenseLog: dispenseLog, validCodes: validCodes,
+		auth: auth, dispenses: dispenses, validCodes: validCodes,
 	}
 }
 
@@ -89,6 +90,7 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/admin.html", w.requireAuth(w.serveStatic("admin.html")))
 	mux.HandleFunc("/diagnostics.html", w.requireAuth(w.serveStatic("diagnostics.html")))
 	mux.HandleFunc("/history.html", w.requireAuth(w.serveStatic("history.html")))
+	mux.HandleFunc("/log.html", w.requireAuth(w.serveStatic("log.html")))
 	mux.HandleFunc("/manual.html", w.requireAuth(w.serveStatic("manual.html")))
 	mux.HandleFunc("/api/diagnostics", w.requireAuth(w.handleDiagnostics))
 	mux.HandleFunc("/api/clearfault", w.requireAuth(w.handleClearFault))
@@ -112,6 +114,7 @@ func (w *WebServer) ListenAndServe() error {
 	mux.HandleFunc("/api/history/channels", w.requireAuth(w.handleHistoryChannels))
 	mux.HandleFunc("/api/history/readings", w.requireAuth(w.handleHistoryReadings))
 	mux.HandleFunc("/api/history/valves", w.requireAuth(w.handleHistoryValves))
+	mux.HandleFunc("/api/log", w.requireAuth(w.handleLog))
 
 	log.Printf("Web UI listening on %s", w.listenAddr)
 	return http.ListenAndServe(w.listenAddr, mux)
@@ -151,7 +154,7 @@ func (w *WebServer) handleStart(rw http.ResponseWriter, r *http.Request) {
 		CustomerCode:      req.CustomerCode,
 	}
 	if err := w.ctrl.Start(job); err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+		writeError(rw, r, err, http.StatusBadRequest)
 		return
 	}
 	rw.WriteHeader(http.StatusOK)
@@ -194,7 +197,7 @@ func (w *WebServer) handleManualEnable(rw http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := w.ctrl.SetManualMode(req.Enable); err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+		writeError(rw, r, err, http.StatusBadRequest)
 		return
 	}
 	rw.WriteHeader(http.StatusOK)
@@ -218,7 +221,7 @@ func (w *WebServer) handleManualPump(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := w.ctrl.ManualSetPump(req.Stage, req.On); err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+		writeError(rw, r, err, http.StatusBadRequest)
 		return
 	}
 	rw.WriteHeader(http.StatusOK)
@@ -254,7 +257,7 @@ func (w *WebServer) handleManualJog(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := w.ctrl.ManualJog(req.Stage, up, req.Active); err != nil {
-		http.Error(rw, err.Error(), http.StatusBadRequest)
+		writeError(rw, r, err, http.StatusBadRequest)
 		return
 	}
 	rw.WriteHeader(http.StatusOK)
@@ -308,7 +311,7 @@ func (w *WebServer) handleConfig(rw http.ResponseWriter, r *http.Request) {
 		if persist {
 			if err := SaveConfigFile(w.configPath, merged); err != nil {
 				resp.SaveError = err.Error()
-				log.Printf("Configuration applied, but failed to save to %s: %v", w.configPath, err)
+				logErrorf("Configuration applied, but failed to save to %s: %v", w.configPath, err)
 			} else {
 				resp.Saved = true
 				log.Printf("Configuration applied and saved to %s", w.configPath)
@@ -518,25 +521,38 @@ func (w *WebServer) handleLookupCode(rw http.ResponseWriter, r *http.Request) {
 	}
 	var resp lookupCodeResponse
 	if w.validCodes != nil {
-		if name, ok := w.validCodes.Lookup(req.Code); ok {
+		if c, ok := w.validCodes.Lookup(req.Code); ok {
 			resp.Valid = true
-			resp.Name = name
+			resp.Name = c.Name
 		}
 	}
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(resp)
 }
 
-// handleRecords drains the dispense log: returns every completed fill
-// recorded since the last call, and clears the file - see
-// DispenseLog.DrainAll. Intended for a billing/accounting system to
-// poll periodically.
+// handleRecords returns completed fills from the dispense database,
+// oldest first, for a billing/accounting system or the admin screen.
+// Records are never removed, so the same range can be fetched again.
+// Query params (all optional): from/to - an RFC3339 time or a
+// YYYY-MM-DD date (local midnight), from inclusive and to exclusive,
+// either end open if omitted - and customerId.
 func (w *WebServer) handleRecords(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(rw, "GET required", http.StatusMethodNotAllowed)
 		return
 	}
-	records, err := w.dispenseLog.DrainAll()
+	q := r.URL.Query()
+	from, err := parseRecordTime(q.Get("from"))
+	if err != nil {
+		http.Error(rw, "invalid from: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	to, err := parseRecordTime(q.Get("to"))
+	if err != nil {
+		http.Error(rw, "invalid to: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	records, err := w.dispenses.Query(from, to, strings.TrimSpace(q.Get("customerId")))
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
@@ -608,6 +624,22 @@ func (w *WebServer) handleHistoryChannels(rw http.ResponseWriter, r *http.Reques
 	}
 	rw.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(rw).Encode(resp)
+}
+
+// parseRecordTime accepts an RFC3339 time or a YYYY-MM-DD date (local
+// midnight); empty means "no limit" (the zero time).
+func parseRecordTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", s, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%q is not an RFC3339 time or a YYYY-MM-DD date", s)
+	}
+	return t, nil
 }
 
 // parseHistoryRange reads the shared from/to/limit query parameters

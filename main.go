@@ -18,12 +18,15 @@ func main() {
 	adminPasswordFile := flag.String("admin-password-file", "admin-password.txt",
 		"path to a file holding the admin password for the operator/admin/diagnostics "+
 			"screens (plain text, one line); auto-generated on first run if missing")
+	dispenseDBFile := flag.String("dispense-db", "dispenses.db",
+		"path to the SQLite database of completed fills (time, customer ID and name, "+
+			"quantity - never the login code); queried via GET /api/records")
 	dispenseLogFile := flag.String("dispense-log-file", "dispense-log.jsonl",
-		"path to the file completed fills are appended to (one JSON object per line); "+
-			"GET /api/records returns and clears it")
+		"path to the old JSON-lines dispense log, from before -dispense-db existed - "+
+			"any records in it are imported into the database at startup and the file deleted")
 	validCodesFile := flag.String("valid-codes-file", "valid-codes.txt",
 		"path to the admin-maintained customer code allow-list (plain text, "+
-			"\"code,Full Name\" per line); a fill's customer code must appear here")
+			"\"code,customer ID,Full Name\" per line) - the only place login codes are stored")
 	historyDBFile := flag.String("history-db", "history.db",
 		"path to the SQLite database storing pressure/temperature/valve history; "+
 			"queried via GET /api/history/*")
@@ -32,24 +35,34 @@ func main() {
 	historyRetentionDays := flag.Int("history-retention-days", 30,
 		"how many days of history to keep before older rows are pruned")
 	flag.Parse()
+	setupLogging()
 
 	adminAuth, err := LoadOrCreateAdminAuth(*adminPasswordFile)
 	if err != nil {
 		log.Fatalf("admin password: %v", err)
 	}
 
-	dispenseLog := NewDispenseLog(*dispenseLogFile)
-
 	validCodes, err := LoadValidCodes(*validCodesFile)
 	if err != nil {
 		log.Fatalf("valid codes: %v", err)
+	}
+
+	dispenses, err := NewDispenseStore(*dispenseDBFile)
+	if err != nil {
+		log.Fatalf("dispense database: %v", err)
+	}
+	defer dispenses.Close()
+	if n, err := dispenses.ImportLegacyDispenseLog(*dispenseLogFile, validCodes); err != nil {
+		logErrorf("dispense database: %v", err)
+	} else if n > 0 {
+		log.Printf("Imported %d dispense record(s) from %s into %s and deleted the old file", n, *dispenseLogFile, *dispenseDBFile)
 	}
 
 	base := DefaultConfig()
 	cfg, loaded, err := LoadConfigFile(*configPath, base)
 	switch {
 	case err != nil:
-		log.Printf("Could not load config file %s (%v) - using built-in defaults", *configPath, err)
+		logErrorf("Could not load config file %s (%v) - using built-in defaults", *configPath, err)
 		cfg = base
 	case loaded:
 		log.Printf("Loaded configuration from %s", *configPath)
@@ -114,7 +127,7 @@ func main() {
 	io := NewCompositeIO(hw, pm, tm, rm, dim, fm)
 
 	ctrl := NewController(live, io)
-	ctrl.SetDispenseLog(dispenseLog)
+	ctrl.SetDispenseStore(dispenses)
 	ctrl.SetValidCodes(validCodes)
 	go ctrl.Run()
 
@@ -129,6 +142,6 @@ func main() {
 	histLogger := NewHistoryLogger(history, io, *historySampleInterval, time.Duration(*historyRetentionDays)*24*time.Hour)
 	go histLogger.Run()
 
-	srv := NewWebServer(ctrl, live, pm, tm, dim, fm, history, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenseLog, validCodes)
+	srv := NewWebServer(ctrl, live, pm, tm, dim, fm, history, cfg.ListenAddr, *configPath, *webDir, adminAuth, dispenses, validCodes)
 	log.Fatal(srv.ListenAndServe())
 }

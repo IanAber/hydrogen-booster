@@ -27,11 +27,11 @@ var apiDocs = []apiEndpointDoc{
 	{
 		Method: "GET", Path: "/api/status", Auth: authPublicLocal,
 		Summary:  "Current job/sensor status, polled continuously by the customer and operator screens.",
-		Response: "phase, running, nozzle, targetPressureBar, targetMassKg, outputPressureBar, outputTempC, tankPressureBar, hydOilTempC, deliveredMassKg, stage1, stage2, ventOpen, faults, startedAt, elapsedSec, manualMode",
+		Response: "phase, running, nozzle, targetPressureBar, targetMassKg, outputPressureBar, outputTempC, tankPressureBar, hydOilTempC, deliveredMassKg, stage1, stage2, ventOpen, faults, faultDetails (each fault with code/params for translation), startedAt, elapsedSec, manualMode, nozzles {has700Bar, sensorsEnabled, detected (350/700, 0 = none), problem}",
 	},
 	{
 		Method: "POST", Path: "/api/start", Auth: authPublicLocal,
-		Summary: "Start a fill job.",
+		Summary: "Start a fill job. nozzle must be 350 or 700 (700 only if the system has a 700 bar nozzle). With nozzle proximity sensors enabled, the lifted nozzle is used - nozzle may be omitted, and the request is refused unless exactly one nozzle is lifted (or if it names a different one).",
 		Request: `{"targetPressureBar":350, "targetMassKg":1, "nozzle":350, "customerCode":"1234"}`,
 	},
 	{
@@ -117,14 +117,15 @@ var apiDocs = []apiEndpointDoc{
 	},
 	{
 		Method: "GET", Path: "/api/records", Auth: authStaff,
-		Summary:  "Drain the dispense log: returns every completed fill since the last call, and clears it. Intended for a billing/accounting system to poll.",
-		Response: `{"records":[{"timestamp":"2026-09-18T12:00:00Z", "customerCode":"1234", "deliveredMassKg":1.234}]}`,
+		Summary:  "Completed fills from the dispense database, oldest first - customer ID and name, never the login code. Records are kept permanently, so the same range can be fetched again.",
+		Request:  "query params (all optional): from, to - RFC3339 time or YYYY-MM-DD date (local midnight), from inclusive, to exclusive; customerId",
+		Response: `{"records":[{"id":1, "timestamp":"2026-09-18T12:00:00Z", "customerId":"ACME-001", "customerName":"Acme Haulage", "deliveredMassKg":1.234}]}`,
 	},
 	{
 		Method: "GET, POST", Path: "/api/admin/codes", Auth: authStaff,
-		Summary:  "GET the customer-code allow-list, or POST to validate and replace it entirely.",
-		Request:  `{"codes":[{"code":"1234","name":"Jane Doe"}]}`,
-		Response: `{"codes":[{"code":"1234","name":"Jane Doe"}]}`,
+		Summary:  "GET the customer-code allow-list, or POST to validate and replace it entirely. Each login code maps to a unique customer ID (up to 32 letters, digits, '.', '_' or '-') and name.",
+		Request:  `{"codes":[{"code":"1234","customerId":"ACME-001","name":"Jane Doe"}]}`,
+		Response: `{"codes":[{"code":"1234","customerId":"ACME-001","name":"Jane Doe"}]}`,
 	},
 	{
 		Method: "GET", Path: "/api/docs", Auth: authStaff,
@@ -147,6 +148,12 @@ var apiDocs = []apiEndpointDoc{
 		Summary:  "Logged valve/relay/digital-input state history for one channel, recorded only on state change; the first point returned carries forward whatever state was already in effect at the start of the requested window.",
 		Request:  "query params: channel (required, see /api/history/channels), from/to (RFC3339, default last 24h), limit (default 10000, max 100000)",
 		Response: `{"channel":"Pump1", "points":[{"ts":"2026-09-21T12:00:00Z","state":true}]}`,
+	},
+	{
+		Method: "GET", Path: "/api/log", Auth: authStaff,
+		Summary:  "This service's systemd journal entries (journalctl -u hydrogen-booster), oldest first, streamed as plain text - one entry per line. Only available on the device itself (503 where journalctl isn't installed).",
+		Request:  "query params: range (all|today|24h|7d, default all), problems=1 for warning priority and above only",
+		Response: "text/plain lines: <local time>\t<syslog priority 0-7, 3=error 4=warning 6=info>\t<message>",
 	},
 }
 

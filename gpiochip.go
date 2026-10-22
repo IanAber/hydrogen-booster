@@ -36,6 +36,7 @@ type GpioLines interface {
 type RelayModule struct {
 	live   *LiveConfig
 	openFn func(chipPath string, offsets []int, consumer string) (GpioLines, error)
+	errLog errorLatch // logs open failures once each, and their recovery
 
 	mu        sync.Mutex
 	lines     GpioLines
@@ -89,10 +90,11 @@ func (m *RelayModule) Run() {
 
 		if sig := relayConfigSignature(cfg); sig != m.currentSignature() {
 			if err := m.openLines(cfg); err != nil {
-				log.Printf("Relay module: %v", err)
+				m.errLog.report("Relay module", err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
+			m.errLog.report("Relay module", nil)
 			log.Printf("Relay module: live data ON (%s)", cfg.Chip)
 		}
 		time.Sleep(200 * time.Millisecond)

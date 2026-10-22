@@ -124,6 +124,7 @@
     </div>
     <p class="muted" data-i18n="manual_hint">Enabling manual control lets you drive each cylinder's pump, direction and relief valves directly, and prevents an automatic fill from starting. Disabling returns every valve to its safe default (relief open, direction and pumps off).</p>
     <div class="error" id="manualError"></div>
+    <div class="error" id="faultMsg" style="white-space:pre-line;"></div>
   </div>
 
   <div class="card">
@@ -250,7 +251,7 @@ async function toggleManual(enable) {
       body: JSON.stringify({enable}),
     });
     if (!res.ok) {
-      errEl.textContent = t('manual_failed') + ' ' + await res.text();
+      errEl.textContent = t('manual_failed') + ' ' + await responseErrorText(res);
     }
   } catch (e) {
     errEl.textContent = t('manual_failed') + ' ' + e;
@@ -265,7 +266,7 @@ async function setPump(stage, on) {
       body: JSON.stringify({stage, on}),
     });
     if (!res.ok) {
-      document.getElementById('manualError').textContent = t('manual_failed') + ' ' + await res.text();
+      document.getElementById('manualError').textContent = t('manual_failed') + ' ' + await responseErrorText(res);
     }
   } catch (e) {
     document.getElementById('manualError').textContent = t('manual_failed') + ' ' + e;
@@ -322,10 +323,19 @@ bindJog(1, 'down', document.getElementById('s1DownBtn'));
 bindJog(2, 'up', document.getElementById('s2UpBtn'));
 bindJog(2, 'down', document.getElementById('s2DownBtn'));
 
+// activeFaultText lists the current faults in the operator's language,
+// one per line, or '' when not faulted - so the operator can see which
+// sensor stopped the booster.
+function activeFaultText(s) {
+  if (s.phase !== 'fault') return '';
+  return faultMessages(s).join('\n');
+}
+
 async function poll() {
   try {
     const res = await fetch('/api/status');
     const s = await res.json();
+    document.getElementById('faultMsg').textContent = activeFaultText(s);
     manualModeEnabled = !!s.manualMode;
     updateManualUI();
   } catch (e) {

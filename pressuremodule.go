@@ -32,6 +32,9 @@ type PressureModule struct {
 	commsOK    bool
 	lastErr    string
 	lastUpdate time.Time
+	liveSince  time.Time // when live data was last switched on; zero while in simulation
+
+	errLog errorLatch // logs comms failures once each, and their recovery
 
 	stop chan struct{}
 }
@@ -73,6 +76,9 @@ func (m *PressureModule) Run() {
 				log.Printf("Pressure module: live data OFF - current readings loaded into simulator")
 			}
 			wasLive = false
+			m.mu.Lock()
+			m.liveSince = time.Time{}
+			m.mu.Unlock()
 			if m.transport != nil {
 				_ = m.transport.Close()
 				m.transport = nil
@@ -82,13 +88,16 @@ func (m *PressureModule) Run() {
 			continue
 		}
 
+		m.mu.Lock()
+		if m.liveSince.IsZero() {
+			m.liveSince = time.Now()
+		}
+		m.mu.Unlock()
+
 		if m.transport == nil || cfg.Interface != currentIface {
 			t, err := m.openFn(cfg.Interface)
 			if err != nil {
-				m.mu.Lock()
-				m.commsOK = false
-				m.lastErr = fmt.Sprintf("open %s: %v", cfg.Interface, err)
-				m.mu.Unlock()
+				m.recordError(fmt.Errorf("open %s: %w", cfg.Interface, err))
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -165,6 +174,7 @@ func (m *PressureModule) pollOnce(cfg CanModuleConfig) {
 	m.lastErr = ""
 	m.lastUpdate = time.Now()
 	m.mu.Unlock()
+	m.errLog.report("Pressure module (CAN)", nil)
 }
 
 func (m *PressureModule) recordError(err error) {
@@ -172,6 +182,7 @@ func (m *PressureModule) recordError(err error) {
 	m.commsOK = false
 	m.lastErr = err.Error()
 	m.mu.Unlock()
+	m.errLog.report("Pressure module (CAN)", err)
 }
 
 // snapshotToSim copies the last known live bar value for every assigned
@@ -211,6 +222,33 @@ func (m *PressureModule) ReadPressureBar(sensor SensorInput) (value float64, ok 
 	}
 	v, ok := m.barSim[sensor]
 	return v, ok
+}
+
+// readForIO is CompositeIO's view of a reading: handled reports
+// whether this module is responsible for sensor (so CompositeIO must
+// not fall back to the simulator), and err why a handled reading isn't
+// usable. While live, the module is responsible for every pressure
+// sensor - one that's unassigned, never read, or stale is an error,
+// never a simulated stand-in. In simulation it behaves exactly like
+// ReadPressureBar.
+func (m *PressureModule) readForIO(sensor SensorInput) (value float64, handled bool, err error) {
+	snap := m.live.Snapshot()
+	cfg := snap.CanModule
+	if !cfg.LiveEnabled {
+		v, ok := m.ReadPressureBar(sensor)
+		return v, ok, nil
+	}
+	if _, assigned := m.assignedChannel(cfg, sensor); !assigned {
+		return 0, true, msgErr("not_assigned_can", nil, "not assigned to an enabled CAN input channel")
+	}
+	maxAge := sensorMaxAge(snap.Safety.SensorMaxAge, cfg.PollPeriod+cfg.ResponseTimeout)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	v, has := m.barLive[sensor]
+	if err := liveReadingErr(has, m.lastUpdate, m.liveSince, maxAge, m.lastErr); err != nil {
+		return 0, true, err
+	}
+	return v, true, nil
 }
 
 // SetSimValue adjusts one channel's simulated value in real time (e.g.

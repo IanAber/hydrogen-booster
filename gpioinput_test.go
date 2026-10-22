@@ -64,6 +64,9 @@ func TestDigitalInputModuleOpenLinesUsesEnabledChannelsInOrder(t *testing.T) {
 	cfg.DigitalInputModule.Channels[0] = DigitalInputChannelConfig{Enabled: true, Assigned: HydraulicOilLevel, Port: 7}
 	cfg.DigitalInputModule.Channels[1] = DigitalInputChannelConfig{Enabled: true, Assigned: Motor1Powered, Port: 3}
 	cfg.DigitalInputModule.Channels[2] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[3] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[4] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[5] = DigitalInputChannelConfig{Enabled: false}
 	live := NewLiveConfig(cfg)
 
 	fake := &fakeDigitalInputLines{}
@@ -179,6 +182,9 @@ func TestDigitalInputModuleClosesBeforeReopeningOverlappingLines(t *testing.T) {
 	cfg.DigitalInputModule.Channels[0] = DigitalInputChannelConfig{Enabled: true, Assigned: HydraulicOilLevel, Port: 2}
 	cfg.DigitalInputModule.Channels[1] = DigitalInputChannelConfig{Enabled: false}
 	cfg.DigitalInputModule.Channels[2] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[3] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[4] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[5] = DigitalInputChannelConfig{Enabled: false}
 	live := NewLiveConfig(cfg)
 
 	var log []string
@@ -210,6 +216,9 @@ func TestDigitalInputSetSimValueRejectsUnassignedSignal(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DigitalInputModule.LiveEnabled = false
 	cfg.DigitalInputModule.Channels[2] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[3] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[4] = DigitalInputChannelConfig{Enabled: false}
+	cfg.DigitalInputModule.Channels[5] = DigitalInputChannelConfig{Enabled: false}
 	live := NewLiveConfig(cfg)
 	dim := NewDigitalInputModule(live, nil)
 

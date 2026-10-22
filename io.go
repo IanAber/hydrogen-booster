@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -18,8 +18,8 @@ const (
 	VentValve                     // Bleeds the delivery hose after a 700 bar fill
 	Pump1                         // Stage 1 hydraulic pump motor - on for the whole fill
 	Pump2                         // Stage 2 hydraulic pump motor - on for the whole fill
-	VentFan                       // Enclosure/area ventilation fan - on with either pump, off after a configurable delay once both stop
-	CoolingFan                    // Hydraulic oil cooler fan - on/off by temperature hysteresis (see CoolingFanConfig)
+	VentFan                       // Enclosure/area ventilation fan - on with either pump or hydrogen detected, off after a configurable delay once neither applies
+	CoolingFan                    // Hydraulic oil cooler fan - on with either pump, or by oil temperature hysteresis (see CoolingFanConfig)
 )
 
 func (r RelayOutput) String() string {
@@ -86,7 +86,40 @@ const (
 	OutputPressure     // final delivery, at the nozzle
 	HydOilTemp         // hydraulic oil temperature (single sensor, not per-stage)
 	OutputTemp
+
+	sensorInputCount // not a sensor - sizes per-sensor tables like SafetyConfig.Limits
 )
+
+// Label is the plain-language name used in fault messages shown to
+// operators, e.g. "Hydraulic 1 pressure".
+func (s SensorInput) Label() string {
+	switch s {
+	case Hyd1Pressure:
+		return "Hydraulic 1 pressure"
+	case Hyd2Pressure:
+		return "Hydraulic 2 pressure"
+	case TankPressure:
+		return "Storage tank pressure"
+	case InterStagePressure:
+		return "Inter-stage pressure"
+	case OutputPressure:
+		return "Hydrogen output pressure"
+	case HydOilTemp:
+		return "Hydraulic oil temperature"
+	case OutputTemp:
+		return "Hydrogen output temperature"
+	default:
+		return s.String()
+	}
+}
+
+// Unit is the engineering unit Label's readings and limits are in.
+func (s SensorInput) Unit() string {
+	if isTempSensor(s) {
+		return "°C"
+	}
+	return "bar"
+}
 
 // String gives each sensor a stable, human-readable name - used in the
 // JSON config file and the admin screen's channel-assignment dropdown,
@@ -169,6 +202,9 @@ const (
 	HydraulicOilLevel DigitalInput = iota // low/0 = sufficient oil; high/1 = low oil, emergency stop
 	Motor1Powered                         // should read low/0 whenever Pump1 is on
 	Motor2Powered                         // should read low/0 whenever Pump2 is on
+	HydrogenDetected                      // hydrogen gas detector alarm contact: low/0 = clear; high/1 = hydrogen present, emergency stop and runs VentFan
+	Nozzle350InUse                        // 350 bar nozzle proximity sensor: high/1 = nozzle lifted (in use); low/0 = returned to its holster
+	Nozzle700InUse                        // 700 bar nozzle proximity sensor: high/1 = nozzle lifted (in use); low/0 = returned to its holster
 )
 
 func (d DigitalInput) String() string {
@@ -179,6 +215,12 @@ func (d DigitalInput) String() string {
 		return "Motor1Powered"
 	case Motor2Powered:
 		return "Motor2Powered"
+	case HydrogenDetected:
+		return "HydrogenDetected"
+	case Nozzle350InUse:
+		return "Nozzle350InUse"
+	case Nozzle700InUse:
+		return "Nozzle700InUse"
 	default:
 		return "unknown"
 	}
@@ -187,6 +229,27 @@ func (d DigitalInput) String() string {
 // ParseDigitalInput is the inverse of DigitalInput.String(), used when
 // reading a signal name back out of the config file or an admin API
 // request (see DigitalInputChannelConfig).
+// Label is the plain-language name used in fault messages shown to
+// operators, e.g. "Hydrogen detector".
+func (d DigitalInput) Label() string {
+	switch d {
+	case HydraulicOilLevel:
+		return "Hydraulic oil level switch"
+	case Motor1Powered:
+		return "Motor 1 running feedback"
+	case Motor2Powered:
+		return "Motor 2 running feedback"
+	case HydrogenDetected:
+		return "Hydrogen detector"
+	case Nozzle350InUse:
+		return "350 bar nozzle sensor"
+	case Nozzle700InUse:
+		return "700 bar nozzle sensor"
+	default:
+		return d.String()
+	}
+}
+
 func ParseDigitalInput(s string) (DigitalInput, bool) {
 	switch s {
 	case "HydraulicOilLevel":
@@ -195,6 +258,12 @@ func ParseDigitalInput(s string) (DigitalInput, bool) {
 		return Motor1Powered, true
 	case "Motor2Powered":
 		return Motor2Powered, true
+	case "HydrogenDetected":
+		return HydrogenDetected, true
+	case "Nozzle350InUse":
+		return Nozzle350InUse, true
+	case "Nozzle700InUse":
+		return Nozzle700InUse, true
 	default:
 		return 0, false
 	}
@@ -245,7 +314,52 @@ type FlowMeterIO interface {
 	ResetFlowTotal() error
 }
 
-var ErrSensorFault = errors.New("sensor read fault")
+var ErrSensorFault error = &msgError{Message: msg("sensor_read_fault", nil, "sensor read fault")}
+
+// ErrSensorPending means a live module has only just started (or been
+// reconfigured) and hasn't produced a first reading yet. Controller
+// treats it as "not ready" - a job won't start - but not yet a fault;
+// once the module's startup grace period passes without a reading, it
+// reports a real error instead.
+var ErrSensorPending error = &msgError{Message: msg("reading_pending", nil, "waiting for first reading")}
+
+// liveReadingErr decides whether a live module's cached reading is
+// still usable. hasValue/lastGood describe the last successful read,
+// liveSince when the module last went live (zero = not yet started),
+// and lastErr the most recent read error, if any, to explain a
+// failure. A module that has never read anything since going live
+// gets maxAge of grace (ErrSensorPending) before it counts as failed.
+func liveReadingErr(hasValue bool, lastGood, liveSince time.Time, maxAge time.Duration, lastErr string) error {
+	now := time.Now()
+	if liveSince.IsZero() {
+		return ErrSensorPending
+	}
+	if !hasValue || lastGood.Before(liveSince) {
+		if now.Sub(liveSince) < maxAge {
+			return ErrSensorPending
+		}
+		return withLastErr(msg("no_reading_since_live", nil, "no reading since live data was switched on"), lastErr)
+	}
+	if age := now.Sub(lastGood); age > maxAge {
+		secs := fmt.Sprintf("%.1f", age.Seconds())
+		return withLastErr(msg("no_reading_for", map[string]any{"seconds": secs}, "no reading for %ss", secs), lastErr)
+	}
+	return nil
+}
+
+// withLastErr turns m into an error, appending the module's most recent
+// low-level error (a driver/OS string, so never itself translated) as
+// its "lastError" param.
+func withLastErr(m Message, lastErr string) error {
+	if lastErr != "" {
+		if m.Params == nil {
+			m.Params = map[string]any{}
+		}
+		m.Params["lastError"] = msg("last_error", map[string]any{"detail": lastErr}, "; last error: %s", lastErr)
+		m.Text += "; last error: " + lastErr
+	}
+	return &msgError{Message: m}
+}
 
 // SimulatedIO is a lightweight stand-in physics model, good enough to
 // exercise the control logic, synchronisation and web UI without real

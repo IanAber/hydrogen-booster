@@ -95,12 +95,12 @@ async function loadDocs() {
           <span class="auth">${e.auth}</span>
         </div>
         <div class="summary">${e.summary}</div>
-        ${e.request ? `<div class="body-block"><div class="body-label">Request</div><pre>${e.request}</pre></div>` : ''}
-        ${e.response ? `<div class="body-block"><div class="body-label">Response</div><pre>${e.response}</pre></div>` : ''}
+        ${e.request ? `<div class="body-block"><div class="body-label">${t('docs_request')}</div><pre>${e.request}</pre></div>` : ''}
+        ${e.response ? `<div class="body-block"><div class="body-label">${t('docs_response')}</div><pre>${e.response}</pre></div>` : ''}
       </div>
     `).join('');
   } catch (e) {
-    container.textContent = 'Failed to load API documentation: ' + e;
+    container.textContent = t('docs_failed_load') + ' ' + e;
   }
 }
 

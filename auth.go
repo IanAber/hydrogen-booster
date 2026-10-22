@@ -38,9 +38,10 @@ type AdminAuth struct {
 
 // LoadOrCreateAdminAuth reads the admin password from path (plain text,
 // trimmed - one line). If the file doesn't exist, it generates a random
-// password, writes it to path (mode 0600) and logs it once - the same
-// bootstrap pattern Jenkins/Grafana-style tools use, so the admin
-// screens are usable without any manual pre-provisioning.
+// password, writes it to path (mode 0600) and logs where to find it
+// (never the password itself) - the same bootstrap pattern
+// Jenkins/Grafana-style tools use, so the admin screens are usable
+// without any manual pre-provisioning.
 func LoadOrCreateAdminAuth(path string) (*AdminAuth, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -58,8 +59,11 @@ func LoadOrCreateAdminAuth(path string) (*AdminAuth, error) {
 	if err := os.WriteFile(path, []byte(pw+"\n"), 0600); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", path, err)
 	}
-	log.Printf("No admin password file at %s - generated one. Admin login: username %q, password %q (also saved to that file)",
-		path, AdminUsername, pw)
+	// Never log the password itself - the log goes to the systemd
+	// journal, which other users and log collection can read. Point at
+	// the file instead, which only the service user can read.
+	log.Printf("No admin password file at %s - generated one. Admin login: username %q, password saved in that file (e.g. sudo cat %s)",
+		path, AdminUsername, path)
 	return &AdminAuth{password: pw, file: path}, nil
 }
 

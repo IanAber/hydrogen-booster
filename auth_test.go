@@ -310,3 +310,18 @@ func TestHandleChangePasswordRejectsTooShortNewPassword(t *testing.T) {
 		t.Error("password should not change when the new one is too short")
 	}
 }
+
+func TestGeneratedPasswordIsNotLogged(t *testing.T) {
+	buf := captureLog(t, false)
+	path := t.TempDir() + "/admin-password"
+	a, err := LoadOrCreateAdminAuth(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), a.password) {
+		t.Fatalf("log contains the generated password: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), path) {
+		t.Errorf("log should say where the password was saved: %q", buf.String())
+	}
+}

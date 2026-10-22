@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"time"
 )
 
@@ -18,6 +18,7 @@ type HistoryLogger struct {
 
 	lastState map[string]bool
 	lastPrune time.Time
+	errLog    errorLatch // logs database write failures once each, and their recovery
 }
 
 // pruneCheckInterval is how often HistoryLogger checks whether it's
@@ -49,14 +50,14 @@ func (h *HistoryLogger) tick(now time.Time) {
 	for _, s := range allPressureSensors {
 		if v, err := h.io.ReadPressureBar(s); err == nil {
 			if err := h.store.InsertReading(now, s.String(), v); err != nil {
-				log.Printf("history: insert reading %s: %v", s, err)
+				h.errLog.report("history database", fmt.Errorf("insert reading %s: %w", s, err))
 			}
 		}
 	}
 	for _, s := range allTempSensors {
 		if v, err := h.io.ReadTempC(s); err == nil {
 			if err := h.store.InsertReading(now, s.String(), v); err != nil {
-				log.Printf("history: insert reading %s: %v", s, err)
+				h.errLog.report("history database", fmt.Errorf("insert reading %s: %w", s, err))
 			}
 		}
 	}
@@ -76,7 +77,7 @@ func (h *HistoryLogger) tick(now time.Time) {
 		h.lastPrune = now
 	} else if now.Sub(h.lastPrune) >= pruneCheckInterval {
 		if err := h.store.Prune(now.Add(-h.retention)); err != nil {
-			log.Printf("history: prune: %v", err)
+			logErrorf("history database: prune: %v", err)
 		}
 		h.lastPrune = now
 	}
@@ -92,6 +93,6 @@ func (h *HistoryLogger) logIfChanged(now time.Time, channel string, state bool) 
 	}
 	h.lastState[channel] = state
 	if err := h.store.InsertValveState(now, channel, state); err != nil {
-		log.Printf("history: insert valve state %s: %v", channel, err)
+		h.errLog.report("history database", fmt.Errorf("insert valve state %s: %w", channel, err))
 	}
 }

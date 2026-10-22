@@ -40,12 +40,35 @@ type HomingConfig struct {
 	Duration time.Duration
 }
 
+// SensorLimit is the allowed range for one pressure (bar) or
+// temperature (°C) reading - outside it, superviseSafety emergency-stops
+// the booster. A minimum below the sensor's real zero catches a broken
+// 4-20mA loop (which reads well below 4mA) or a failed DS18B20.
+type SensorLimit struct {
+	Min float64
+	Max float64
+}
+
 // SafetyConfig holds interlock limits, independent of any single stage.
 type SafetyConfig struct {
-	MaxHydraulicPressureBar float64
-	MaxHydrogenPressureBar  float64
-	MaxTempC                float64
-	SensorMaxAge            time.Duration
+	// Limits is indexed by SensorInput - every pressure and temperature
+	// sensor has its own min/max, editable from the admin screen.
+	Limits [sensorInputCount]SensorLimit
+	// SensorMaxAge is how old a live module's last good reading may get
+	// before the sensor counts as unreadable. Each module never uses
+	// less than 3x its own poll period (see sensorMaxAge), so a slow
+	// module like the 1-Wire temperature bus can't trip on a value
+	// that's merely between polls.
+	SensorMaxAge time.Duration
+}
+
+// sensorMaxAge is the effective staleness limit for a module polling
+// every pollPeriod - see SafetyConfig.SensorMaxAge.
+func sensorMaxAge(configured, pollPeriod time.Duration) time.Duration {
+	if floor := 3 * pollPeriod; configured < floor {
+		return floor
+	}
+	return configured
 }
 
 // CanChannelConfig is the calibration and assignment for one physical
@@ -171,10 +194,11 @@ type DigitalInputChannelConfig struct {
 
 // DigitalInputChannelCount matches the number of digital feedback
 // signals the system reads (see allDigitalInputs in controller.go).
-const DigitalInputChannelCount = 3
+const DigitalInputChannelCount = 6
 
 // DigitalInputModuleConfig configures the digital feedback inputs
-// (hydraulic oil level, motor-powered confirmation), addressed via the
+// (hydraulic oil level, motor-powered confirmation, hydrogen detector
+// alarm), addressed via the
 // kernel gpiochip character device on a different chip than the relay
 // outputs (e.g. /dev/gpiochip0 vs. the relays' /dev/gpiochip16).
 type DigitalInputModuleConfig struct {
@@ -240,21 +264,36 @@ type VentConfig struct {
 // VentFanConfig controls the VentFan relay - an enclosure/area
 // ventilation fan, distinct from VentConfig above, which times the
 // hydrogen delivery hose bleed valve (VentValve). VentFan energises
-// immediately whenever either pump runs; OffDelay is how long it stays
-// energised after both pumps are confirmed off, before de-energising
-// (see Controller.tickFans).
+// immediately whenever either pump runs or the hydrogen detector
+// (HydrogenDetected) reports gas; OffDelay is how long it stays
+// energised after both pumps are confirmed off and the detector has
+// cleared, before de-energising (see Controller.tickFans).
 type VentFanConfig struct {
 	OffDelay time.Duration
 }
 
 // CoolingFanConfig controls the CoolingFan relay (the hydraulic oil
-// cooler fan) via temperature hysteresis: it turns on once HydOilTemp
-// exceeds SetpointC while the pumps are running, and - once on - stays
-// on until HydOilTemp drops to SetpointC-1, independent of pump state,
-// so residual heat keeps getting cooled after the pump that generated
-// it stops (see Controller.tickFans).
+// cooler fan): it runs whenever either pump is running, and also -
+// independent of pump state - whenever HydOilTemp exceeds SetpointC,
+// staying on until HydOilTemp drops to SetpointC-1 (hysteresis), so
+// residual heat keeps getting cooled after the pump that generated it
+// stops (see Controller.tickFans).
 type CoolingFanConfig struct {
 	SetpointC float64
+}
+
+// NozzleConfig describes the dispensing nozzles fitted to this system.
+type NozzleConfig struct {
+	// Has700Bar is false on a system that can only output 350 bar: the
+	// 700 bar nozzle option is hidden on the job screens and Start
+	// rejects it, which also caps the target pressure at 350 bar.
+	Has700Bar bool
+	// SensorsEnabled selects the nozzle from its holster proximity
+	// sensors (Nozzle350InUse/Nozzle700InUse: 1 = lifted, 0 = returned)
+	// instead of an operator button. Exactly one nozzle must be lifted
+	// for a fill to start, and the lifted nozzle mustn't change during
+	// the fill (see Controller.detectNozzle).
+	SensorsEnabled bool
 }
 
 type Config struct {
@@ -282,6 +321,7 @@ type Config struct {
 	// delivered mass. Purely a display/behavior switch - no other
 	// backend logic depends on it.
 	MassMeasurementEnabled bool
+	Nozzles                NozzleConfig
 	PollPeriod             time.Duration
 	Stage1                 StageConfig
 	Stage2                 StageConfig
@@ -330,6 +370,7 @@ func DefaultConfig() Config {
 		SystemName:             "Hydrogen Booster",
 		Language:               "en",
 		MassMeasurementEnabled: false,
+		Nozzles:                NozzleConfig{Has700Bar: true, SensorsEnabled: false},
 		PollPeriod:             100 * time.Millisecond,
 		Stage1: StageConfig{
 			Name: "Stage 1 (A/B)", DirRelay: Valve1A, ReliefRelay: Valve1B,
@@ -354,11 +395,20 @@ func DefaultConfig() Config {
 		Homing:                      HomingConfig{Duration: 8 * time.Second},
 		PressureBlankTime:           0,
 		OutputPressureFilterSamples: 1,
+		// Minimums of -1 bar / -30 °C sit just below any real reading,
+		// so they mainly catch a broken sensor loop rather than a
+		// genuine process condition.
 		Safety: SafetyConfig{
-			MaxHydraulicPressureBar: 250,
-			MaxHydrogenPressureBar:  750,
-			MaxTempC:                85,
-			SensorMaxAge:            2 * time.Second,
+			Limits: [sensorInputCount]SensorLimit{
+				Hyd1Pressure:       {Min: -1, Max: 250},
+				Hyd2Pressure:       {Min: -1, Max: 250},
+				TankPressure:       {Min: -1, Max: 300},
+				InterStagePressure: {Min: -1, Max: 500},
+				OutputPressure:     {Min: -1, Max: 750},
+				HydOilTemp:         {Min: -30, Max: 85},
+				OutputTemp:         {Min: -30, Max: 85},
+			},
+			SensorMaxAge: 2 * time.Second,
 		},
 		Tank:       TankConfig{VolumeLitres: 300, NominalPressureBar: 200, NominalTempC: 15},
 		Vent:       VentConfig{Duration: 5 * time.Second},
@@ -433,6 +483,9 @@ func DefaultConfig() Config {
 				{Enabled: true, Assigned: HydraulicOilLevel, Port: 2},
 				{Enabled: true, Assigned: Motor1Powered, Port: 3},
 				{Enabled: true, Assigned: Motor2Powered, Port: 5},
+				{Enabled: true, Assigned: HydrogenDetected, Port: 6},
+				{Enabled: true, Assigned: Nozzle350InUse, Port: 12},
+				{Enabled: true, Assigned: Nozzle700InUse, Port: 13},
 			},
 		},
 		// No flow sensor by default - confirm RS-232 vs RS-485 wiring,

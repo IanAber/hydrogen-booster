@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -28,10 +29,11 @@ type JobRequest struct {
 	TargetPressureBar float64
 	TargetMassKg      float64
 	Nozzle            NozzleSize
-	// CustomerCode identifies who a fill was for, entered on the public
-	// customer screen before Start is enabled there. 1-10 digits,
-	// required. Purely a record for the journal (see the "Job started"
-	// log line); nothing downstream acts on it.
+	// CustomerCode is the customer's login code, entered on the public
+	// customer screen before Start is enabled there. 1-10 digits. Start
+	// checks it against the codes list and resolves it to the customer
+	// (ID and name) - the code itself goes no further: it's never
+	// logged, kept with the job, or recorded with the dispense.
 	CustomerCode string
 }
 
@@ -50,9 +52,13 @@ type Status struct {
 	Stage2            StageStatus `json:"stage2"`
 	VentOpen          bool        `json:"ventOpen"`
 	Faults            []string    `json:"faults,omitempty"`
-	StartedAt         *time.Time  `json:"startedAt,omitempty"`
-	ElapsedSec        float64     `json:"elapsedSec"`
-	ManualMode        bool        `json:"manualMode"`
+	// FaultDetails carries the same faults as Faults, with each one's
+	// code/params so the web UI can show it in the operator's language.
+	FaultDetails []FaultRecord `json:"faultDetails,omitempty"`
+	StartedAt    *time.Time    `json:"startedAt,omitempty"`
+	ElapsedSec   float64       `json:"elapsedSec"`
+	ManualMode   bool          `json:"manualMode"`
+	Nozzles      NozzleStatus  `json:"nozzles"`
 }
 
 // Controller is the top level supervisor: it runs the two Stages, keeps
@@ -71,7 +77,12 @@ type Controller struct {
 	job           JobRequest
 	startedAt     time.Time
 	initialTankKg float64
-	faults        []string
+	faults        []FaultRecord
+	faultKeys     map[string]bool // see raiseFaultKey; reset whenever faults is
+	// sensorProblems is superviseSafety's own record (key -> text) of
+	// the sensor problems seen on its last pass - only ever touched from
+	// the control loop - used to log when each one clears.
+	sensorProblems map[string]string
 	// finalDeliveredMassKg is the delivered-mass snapshot taken at the
 	// moment a job stops (reaches target, is aborted, or faults).
 	// Status() reports this instead of a fresh deliveredMassKg() call
@@ -80,13 +91,14 @@ type Controller struct {
 	// real hardware too) even though no gas is moving anymore.
 	finalDeliveredMassKg float64
 
-	// pumpsOffSince/coolingFanOn are tickFans' own persistent state -
-	// zero pumpsOffSince means the pumps are currently on (or have never
-	// been observed off); coolingFanOn is the fan's last commanded
-	// state, needed because its own off-transition depends on that
-	// history, not just the instantaneous temperature reading.
-	pumpsOffSince time.Time
-	coolingFanOn  bool
+	// ventDemandOffSince/oilAboveSetpoint are tickFans' own persistent
+	// state - zero ventDemandOffSince means VentFan is currently demanded
+	// (a pump on or hydrogen detected), or the demand has never been
+	// observed to clear; oilAboveSetpoint is the temperature hysteresis
+	// state, needed because its off-transition depends on that history,
+	// not just the instantaneous temperature reading.
+	ventDemandOffSince time.Time
+	oilAboveSetpoint   bool
 
 	// outputPressureFilterBuf/filteredOutputPressureBar/
 	// filteredOutputPressureErr are tickOutputPressureFilter's own
@@ -98,13 +110,17 @@ type Controller struct {
 	filteredOutputPressureBar float64
 	filteredOutputPressureErr error
 
-	// dispenseLog and validCodes are optional (nil-safe) - set via
-	// SetDispenseLog/SetValidCodes if the caller wants completed fills
+	// dispenses and validCodes are optional (nil-safe) - set via
+	// SetDispenseStore/SetValidCodes if the caller wants completed fills
 	// recorded and customer codes checked against an allow-list. Kept
 	// optional (rather than required constructor args) so existing
 	// callers/tests that don't care about either keep working unchanged.
-	dispenseLog *DispenseLog
-	validCodes  *ValidCodes
+	dispenses  *DispenseStore
+	validCodes *ValidCodes
+
+	// customer is who the current/last job is for, resolved from its
+	// login code by Start (zero if none was entered).
+	customer Customer
 
 	// manualMode is set by SetManualMode, from the manual piston control
 	// page - see its doc comment.
@@ -122,11 +138,11 @@ type manualReverseState struct {
 	deadline time.Time
 }
 
-// SetDispenseLog wires up recording of completed fills (see
+// SetDispenseStore wires up recording of completed fills (see
 // superviseJob). Call once before Run(); nil is fine and just means
 // completions aren't recorded anywhere.
-func (c *Controller) SetDispenseLog(d *DispenseLog) {
-	c.dispenseLog = d
+func (c *Controller) SetDispenseStore(d *DispenseStore) {
+	c.dispenses = d
 }
 
 // SetValidCodes wires up the admin-maintained customer code allow-list
@@ -186,7 +202,7 @@ func (c *Controller) Run() {
 // filter's window is anchored to the actual poll period regardless of
 // how often status is separately requested over HTTP.
 //
-// Deliberately NOT used by superviseSafety's MaxHydrogenPressureBar
+// Deliberately NOT used by superviseSafety's OutputPressure limit
 // check, which reads the sensor directly - see
 // Config.OutputPressureFilterSamples' doc comment in config.go for why.
 func (c *Controller) tickOutputPressureFilter() {
@@ -220,30 +236,110 @@ func (c *Controller) outputPressureBar() (float64, error) {
 	return c.filteredOutputPressureBar, c.filteredOutputPressureErr
 }
 
+// sensorProblem is one sensor that's unreadable or outside its limits.
+type sensorProblem struct {
+	key     string  // stable identity, so a persisting problem is only logged once per fault
+	msg     Message // operator-facing description naming the sensor
+	pending bool    // a live module hasn't produced its first reading yet - not ready, but not a fault
+}
+
+// checkSensors reads every pressure, temperature and digital sensor and
+// reports each one that can't be read or (pressure/temperature) reads
+// outside its SafetyConfig.Limits range. It reads the raw sensor
+// values, deliberately unaffected by OutputPressureFilterSamples, so a
+// filtering misconfiguration can never mask a genuine limit breach.
+func (c *Controller) checkSensors() []sensorProblem {
+	limits := c.live.Snapshot().Safety.Limits
+	var out []sensorProblem
+	unreadable := func(key, label string, err error) {
+		out = append(out, sensorProblem{
+			key: "unreadable:" + key,
+			msg: msg("sensor_unreadable", map[string]any{"sensor": key, "reason": messageOf(err)},
+				"%s sensor unreadable (%v)", label, err),
+			pending: errors.Is(err, ErrSensorPending),
+		})
+	}
+	checkValue := func(sn SensorInput, v float64, err error) {
+		if err != nil {
+			unreadable(sn.String(), sn.Label(), err)
+			return
+		}
+		l := limits[sn]
+		params := func(limit float64) map[string]any {
+			return map[string]any{"sensor": sn.String(), "value": fmt.Sprintf("%.1f", v), "limit": fmt.Sprintf("%.1f", limit), "unit": sn.Unit()}
+		}
+		switch {
+		case v > l.Max:
+			out = append(out, sensorProblem{key: "max:" + sn.String(),
+				msg: msg("sensor_above_max", params(l.Max), "%s %.1f %s is above its maximum of %.1f %s", sn.Label(), v, sn.Unit(), l.Max, sn.Unit())})
+		case v < l.Min:
+			out = append(out, sensorProblem{key: "min:" + sn.String(),
+				msg: msg("sensor_below_min", params(l.Min), "%s %.1f %s is below its minimum of %.1f %s", sn.Label(), v, sn.Unit(), l.Min, sn.Unit())})
+		}
+	}
+	for _, sn := range allPressureSensors {
+		v, err := c.io.ReadPressureBar(sn)
+		checkValue(sn, v, err)
+	}
+	for _, sn := range allTempSensors {
+		v, err := c.io.ReadTempC(sn)
+		checkValue(sn, v, err)
+	}
+	nozzles := c.live.Snapshot().Nozzles
+	for _, d := range allDigitalInputs {
+		// Nozzle sensors only matter when they're in use - unwired
+		// ones mustn't stop a system that selects the nozzle by button.
+		if (d == Nozzle350InUse || d == Nozzle700InUse) && !nozzles.SensorsEnabled {
+			continue
+		}
+		if d == Nozzle700InUse && !nozzles.Has700Bar {
+			continue
+		}
+		if _, err := c.io.ReadDigitalInput(d); err != nil {
+			unreadable(d.String(), d.Label(), err)
+		}
+	}
+	return out
+}
+
+// sensorsReady returns an error describing the first sensor problem
+// (including one still waiting for its first reading), or nil if every
+// sensor is readable and within limits - checked before anything is
+// allowed to start a pump.
+func (c *Controller) sensorsReady() error {
+	if problems := c.checkSensors(); len(problems) > 0 {
+		p := problems[0].msg
+		return msgErr("cannot_start", map[string]any{"reason": p}, "cannot start: %s", p.Text)
+	}
+	return nil
+}
+
 func (c *Controller) superviseSafety() {
-	safety := c.live.Snapshot().Safety
-	check := func(label string, v float64, max float64) {
-		if v > max {
-			c.raiseFault(fmt.Sprintf("%s %.1f exceeds limit %.1f - emergency stop", label, v, max))
+	current := map[string]string{}
+	for _, p := range c.checkSensors() {
+		if !p.pending {
+			current[p.key] = p.msg.Text
+			c.raiseFaultKey(p.key, emergencyStop(p.msg))
 		}
 	}
-	if p, err := c.io.ReadPressureBar(Hyd1Pressure); err == nil {
-		check("Hydraulic 1 pressure (bar)", p, safety.MaxHydraulicPressureBar)
-	}
-	if p, err := c.io.ReadPressureBar(Hyd2Pressure); err == nil {
-		check("Hydraulic 2 pressure (bar)", p, safety.MaxHydraulicPressureBar)
-	}
-	if p, err := c.io.ReadPressureBar(OutputPressure); err == nil {
-		check("Hydrogen output pressure (bar)", p, safety.MaxHydrogenPressureBar)
-	}
-	for _, s := range []SensorInput{HydOilTemp, OutputTemp} {
-		if temp, err := c.io.ReadTempC(s); err == nil {
-			check("Temperature (C)", temp, safety.MaxTempC)
+	// Log each sensor problem clearing, so the journal shows when a
+	// sensor came back as well as when it failed - the fault itself
+	// stays active until an operator clears it.
+	for key, text := range c.sensorProblems {
+		if _, still := current[key]; !still {
+			log.Printf("Sensor problem resolved: %s", text)
 		}
 	}
+	c.sensorProblems = current
 
 	if level, err := c.io.ReadDigitalInput(HydraulicOilLevel); err == nil && level {
-		c.raiseFault("Hydraulic oil level low - emergency stop")
+		c.raiseFaultKey("oil_level_low", emergencyStop(msg("oil_level_low", nil, "Hydraulic oil level low")))
+	}
+
+	// Hydrogen detected stops the booster; VentFan is driven separately
+	// by tickFans and deliberately keeps running through the fault.
+	if h2, err := c.io.ReadDigitalInput(HydrogenDetected); err == nil && h2 {
+		c.raiseFaultKey("hydrogen_detected", emergencyStop(msg("hydrogen_detected", nil, "Hydrogen detected")))
 	}
 
 	// Motor-powered feedback is active-low: it should read low while its
@@ -270,72 +366,113 @@ func (c *Controller) superviseSafety() {
 			continue
 		}
 		if pumpOn == motorHigh {
-			c.raiseFault(fmt.Sprintf("Pump %s / Motor %s feedback mismatch - emergency stop", pm.label, pm.label))
+			c.raiseFaultKey("pump_motor_mismatch:"+pm.label, emergencyStop(msg("pump_motor_mismatch", map[string]any{"pump": pm.label},
+				"Pump %s / Motor %s feedback mismatch", pm.label, pm.label)))
 		}
 	}
 }
 
 // tickFans drives the two auxiliary relay outputs that aren't part of
 // the hydraulic stage machine or the fill-job phase machine - they run
-// continuously off live pump/temperature readings regardless of job
-// phase, so an emergency stop or fault deliberately does not force
-// them off (see raiseFault/Stop): VentFan keeps purging the enclosure
-// and CoolingFan keeps cooling the oil for as long as either is
-// actually warranted.
+// continuously off live pump/temperature/gas-detector readings
+// regardless of job phase, so an emergency stop or fault deliberately
+// does not force them off (see raiseFault/Stop): VentFan keeps purging
+// the enclosure and CoolingFan keeps cooling the oil for as long as
+// either is actually warranted. "Operating" here means either pump is
+// commanded on - that covers fills, homing and manual piston control
+// alike, since nothing moves hydraulically without a pump.
 //
-//   - VentFan energises the instant either pump is commanded on, and
-//     de-energises VentFan.OffDelay after both are confirmed off.
-//   - CoolingFan's turn-on requires both "oil above setpoint" AND
-//     "pumps running"; once on, it stays on by temperature alone
-//     (independent of pump state) until the oil drops to setpoint-1,
-//     so residual heat keeps getting cooled after the pump that
-//     generated it stops.
+//   - VentFan energises the instant either pump is commanded on or
+//     HydrogenDetected reads high, and de-energises VentFan.OffDelay
+//     after both pumps are off and the detector has cleared. A failed
+//     detector read counts as hydrogen present (fail-safe: ventilate
+//     when the area can't be confirmed clear).
+//   - CoolingFan runs whenever either pump is on. Independently of
+//     pump state, it also turns on once oil exceeds the setpoint and
+//     stays on by temperature until the oil drops to setpoint-1, so
+//     residual heat keeps getting cooled after the pump that generated
+//     it stops. A failed oil temperature read holds the temperature
+//     demand at its last state rather than guessing either way.
 func (c *Controller) tickFans(now time.Time) {
 	p1, _ := c.io.RelayState(Pump1)
 	p2, _ := c.io.RelayState(Pump2)
 	anyPumpOn := p1 || p2
 
-	if anyPumpOn {
+	h2, err := c.io.ReadDigitalInput(HydrogenDetected)
+	h2Present := h2 || err != nil
+
+	if anyPumpOn || h2Present {
 		c.mu.Lock()
-		c.pumpsOffSince = time.Time{}
+		c.ventDemandOffSince = time.Time{}
 		c.mu.Unlock()
 		_ = c.io.SetRelay(VentFan, true)
 	} else {
 		c.mu.Lock()
-		if c.pumpsOffSince.IsZero() {
-			c.pumpsOffSince = now
+		if c.ventDemandOffSince.IsZero() {
+			c.ventDemandOffSince = now
 		}
-		elapsed := now.Sub(c.pumpsOffSince)
+		elapsed := now.Sub(c.ventDemandOffSince)
 		c.mu.Unlock()
 		if elapsed >= c.live.Snapshot().VentFan.OffDelay {
 			_ = c.io.SetRelay(VentFan, false)
 		}
 	}
 
-	if oilT, err := c.io.ReadTempC(HydOilTemp); err == nil {
+	oilT, oilErr := c.io.ReadTempC(HydOilTemp)
+	c.mu.Lock()
+	hot := c.oilAboveSetpoint
+	if oilErr == nil {
 		setpoint := c.live.Snapshot().CoolingFan.SetpointC
-		c.mu.Lock()
-		on := c.coolingFanOn
 		switch {
-		case !on && anyPumpOn && oilT > setpoint:
-			on = true
-		case on && oilT < setpoint-1:
-			on = false
+		case !hot && oilT > setpoint:
+			hot = true
+		case hot && oilT < setpoint-1:
+			hot = false
 		}
-		c.coolingFanOn = on
-		c.mu.Unlock()
-		_ = c.io.SetRelay(CoolingFan, on)
 	}
+	c.oilAboveSetpoint = hot
+	c.mu.Unlock()
+	_ = c.io.SetRelay(CoolingFan, anyPumpOn || hot)
 }
 
-func (c *Controller) raiseFault(msg string) {
+// raiseFault records a fault from plain (untranslated) text.
+func (c *Controller) raiseFault(text string) {
+	c.raiseFaultKey(text, Message{Text: text})
+}
+
+// emergencyStop wraps the reason for a fault that stops the booster.
+func emergencyStop(reason Message) Message {
+	return msg("emergency_stop", map[string]any{"reason": reason}, "%s - emergency stop", reason.Text)
+}
+
+// FaultRecord is one entry in Status.FaultDetails - the same fault as
+// the matching Status.Faults string, with its Message for translation.
+type FaultRecord struct {
+	At time.Time `json:"at"`
+	Message
+}
+
+// raiseFaultKey records a fault under key - a condition that persists
+// across many control-loop ticks (e.g. an unreadable sensor) is only
+// added to the fault list once until the fault is cleared, rather than
+// once per tick. Every distinct key is still recorded, so all of the
+// sensors that are currently a problem show up.
+func (c *Controller) raiseFaultKey(key string, m Message) {
 	c.mu.Lock()
 	already := c.phase == PhaseFault
-	c.faults = append(c.faults, fmt.Sprintf("[%s] %s", time.Now().Format(time.RFC3339), msg))
+	if already && c.faultKeys[key] {
+		c.mu.Unlock()
+		return
+	}
+	if c.faultKeys == nil {
+		c.faultKeys = map[string]bool{}
+	}
+	c.faultKeys[key] = true
+	c.faults = append(c.faults, FaultRecord{At: time.Now(), Message: m})
 	c.phase = PhaseFault
 	c.mu.Unlock()
+	logErrorf("FAULT: %s", m.Text)
 	if !already {
-		log.Printf("FAULT: %s", msg)
 		c.stages.Stop()
 		_ = c.io.SetRelay(VentValve, false)
 		setIORunning(c.io, false)
@@ -369,34 +506,67 @@ func (c *Controller) Start(job JobRequest) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.manualMode {
-		return fmt.Errorf("cannot start an automatic job while manual piston control is enabled")
+		return msgErr("manual_blocks_start", nil, "cannot start an automatic job while manual piston control is enabled")
 	}
 	if c.phase == PhaseFilling || c.phase == PhaseVenting {
-		return fmt.Errorf("job already running")
+		return msgErr("job_already_running", nil, "job already running")
+	}
+	nozzles := c.live.Snapshot().Nozzles
+	if nozzles.SensorsEnabled {
+		// The lifted nozzle decides - a request naming a different one
+		// (e.g. the screen hadn't caught up yet) is refused rather than
+		// silently filling through a nozzle nobody chose.
+		detected, err := c.detectNozzle()
+		if err != nil {
+			return err
+		}
+		if job.Nozzle != 0 && job.Nozzle != detected {
+			return msgErr("nozzle_mismatch", map[string]any{"lifted": fmt.Sprint(int(detected)), "requested": fmt.Sprint(int(job.Nozzle))},
+				"the %d bar nozzle is lifted, not the %d bar nozzle", detected, job.Nozzle)
+		}
+		job.Nozzle = detected
 	}
 	if job.Nozzle != Nozzle350 && job.Nozzle != Nozzle700 {
-		return fmt.Errorf("nozzle must be 350 or 700 bar")
+		return msgErr("nozzle_invalid", nil, "nozzle must be 350 or 700 bar")
+	}
+	if job.Nozzle == Nozzle700 && !nozzles.Has700Bar {
+		return msgErr("nozzle_700_not_fitted", nil, "this system has no 700 bar nozzle")
 	}
 	maxForNozzle := float64(job.Nozzle)
 	if job.TargetPressureBar <= 0 || job.TargetPressureBar > maxForNozzle {
-		return fmt.Errorf("target pressure must be between 0 and %d bar for the selected nozzle", job.Nozzle)
+		return msgErr("target_pressure_range", map[string]any{"max": fmt.Sprint(int(job.Nozzle))}, "target pressure must be between 0 and %d bar for the selected nozzle", job.Nozzle)
 	}
-	safety := c.live.Snapshot().Safety
-	if job.TargetPressureBar > safety.MaxHydrogenPressureBar {
-		return fmt.Errorf("target pressure exceeds system safety limit of %.0f bar", safety.MaxHydrogenPressureBar)
+	maxOutput := c.live.Snapshot().Safety.Limits[OutputPressure].Max
+	if job.TargetPressureBar > maxOutput {
+		return msgErr("target_pressure_over_limit", map[string]any{"limit": fmt.Sprintf("%.0f", maxOutput)}, "target pressure exceeds system safety limit of %.0f bar", maxOutput)
 	}
 	if job.TargetMassKg <= 0 {
-		return fmt.Errorf("target mass must be greater than zero")
+		return msgErr("target_mass_invalid", nil, "target mass must be greater than zero")
 	}
 	if job.CustomerCode != "" && !isValidCustomerCode(job.CustomerCode) {
-		return fmt.Errorf("customer code must be 1-10 digits")
+		return msgErr("customer_code_format", nil, "customer code must be 1-10 digits")
 	}
 	if job.CustomerCode != "" && c.validCodes != nil && !c.validCodes.IsValid(job.CustomerCode) {
-		return fmt.Errorf("customer code not recognised")
+		return msgErr("customer_code_unknown", nil, "customer code not recognised")
 	}
 
+	if err := c.sensorsReady(); err != nil {
+		return err
+	}
+
+	// Resolve the login code to the customer, then drop it - from here
+	// on the job is identified only by customer ID and name.
+	var customer Customer
+	if job.CustomerCode != "" && c.validCodes != nil {
+		customer, _ = c.validCodes.Lookup(job.CustomerCode)
+	}
+	codeEntered := job.CustomerCode != ""
+	job.CustomerCode = ""
+
 	c.job = job
+	c.customer = customer
 	c.faults = nil
+	c.faultKeys = nil
 	c.finalDeliveredMassKg = 0
 	c.startedAt = time.Now()
 	tank := c.live.Snapshot().Tank
@@ -416,13 +586,75 @@ func (c *Controller) Start(job JobRequest) error {
 	_ = c.io.SetRelay(Pump2, true)
 
 	c.stages.Start()
-	codeMsg := "no customer code"
-	if job.CustomerCode != "" {
-		codeMsg = "customer code " + job.CustomerCode
-	}
 	log.Printf("Job started: target %.1f bar, %.3f kg, %d bar nozzle, %s",
-		job.TargetPressureBar, job.TargetMassKg, job.Nozzle, codeMsg)
+		job.TargetPressureBar, job.TargetMassKg, job.Nozzle, describeCustomer(customer, codeEntered))
 	return nil
+}
+
+// detectNozzle reads the nozzle proximity sensors (1 = lifted) and
+// returns the one nozzle in use. It's an error for none, or both, to be
+// lifted - only one nozzle can be in use at a time. On a system without
+// a 700 bar nozzle only the 350 bar sensor is consulted.
+func (c *Controller) detectNozzle() (NozzleSize, error) {
+	has700 := c.live.Snapshot().Nozzles.Has700Bar
+	in350, err := c.io.ReadDigitalInput(Nozzle350InUse)
+	if err != nil {
+		return 0, &msgError{Message: msg("sensor_unreadable", map[string]any{"sensor": Nozzle350InUse.String(), "reason": messageOf(err)},
+			"%s sensor unreadable (%v)", Nozzle350InUse.Label(), err), wrapped: err}
+	}
+	in700 := false
+	if has700 {
+		if in700, err = c.io.ReadDigitalInput(Nozzle700InUse); err != nil {
+			return 0, &msgError{Message: msg("sensor_unreadable", map[string]any{"sensor": Nozzle700InUse.String(), "reason": messageOf(err)},
+				"%s sensor unreadable (%v)", Nozzle700InUse.Label(), err), wrapped: err}
+		}
+	}
+	switch {
+	case in350 && in700:
+		return 0, msgErr("nozzle_both_lifted", nil, "both nozzles are lifted - return the one not being used")
+	case in350:
+		return Nozzle350, nil
+	case in700:
+		return Nozzle700, nil
+	default:
+		return 0, msgErr("nozzle_none_lifted", nil, "lift the nozzle to be used before starting")
+	}
+}
+
+// NozzleStatus tells the job screens which nozzle options to offer and,
+// with sensors enabled, which nozzle is currently lifted.
+type NozzleStatus struct {
+	Has700Bar      bool     `json:"has700Bar"`
+	SensorsEnabled bool     `json:"sensorsEnabled"`
+	Detected       int      `json:"detected"`          // 350 or 700 when exactly one nozzle is lifted, else 0
+	Problem        *Message `json:"problem,omitempty"` // why no nozzle is detected (none/both lifted, sensor fault)
+}
+
+func (c *Controller) nozzleStatus() NozzleStatus {
+	cfg := c.live.Snapshot().Nozzles
+	st := NozzleStatus{Has700Bar: cfg.Has700Bar, SensorsEnabled: cfg.SensorsEnabled}
+	if cfg.SensorsEnabled {
+		if n, err := c.detectNozzle(); err != nil {
+			m := messageOf(err)
+			st.Problem = &m
+		} else {
+			st.Detected = int(n)
+		}
+	}
+	return st
+}
+
+// describeCustomer is how a job's customer appears in the log - by ID
+// and name, never by login code.
+func describeCustomer(c Customer, codeEntered bool) string {
+	switch {
+	case c.ID != "":
+		return fmt.Sprintf("customer %s (%s)", c.ID, c.Name)
+	case codeEntered:
+		return "customer code entered (no codes list to identify the customer)"
+	default:
+		return "no customer"
+	}
 }
 
 // isValidCustomerCode checks a non-empty customer-identifying code is
@@ -475,8 +707,10 @@ func (c *Controller) ClearFault() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.phase == PhaseFault {
+		log.Printf("Fault cleared by operator (%d fault(s) acknowledged)", len(c.faults))
 		c.phase = PhaseIdle
 		c.faults = nil
+		c.faultKeys = nil
 	}
 }
 
@@ -505,7 +739,7 @@ func (c *Controller) SetManualMode(enable bool) error {
 	c.mu.Lock()
 	if enable && (c.phase == PhaseFilling || c.phase == PhaseVenting) {
 		c.mu.Unlock()
-		return fmt.Errorf("cannot enable manual control while a job is running")
+		return msgErr("manual_blocked_by_job", nil, "cannot enable manual control while a job is running")
 	}
 	c.manualMode = enable
 	// Clear any pending reverse-delay close in the same critical section
@@ -534,7 +768,7 @@ func (c *Controller) manualStageConfig(stage int) (StageConfig, error) {
 	case 2:
 		return snap.Stage2, nil
 	default:
-		return StageConfig{}, fmt.Errorf("stage must be 1 or 2")
+		return StageConfig{}, msgErr("stage_invalid", nil, "stage must be 1 or 2")
 	}
 }
 
@@ -542,7 +776,7 @@ func (c *Controller) manualStageConfig(stage int) (StageConfig, error) {
 // the manual control page. Only permitted while manual mode is enabled.
 func (c *Controller) ManualSetPump(stage int, on bool) error {
 	if !c.ManualMode() {
-		return fmt.Errorf("manual control is not enabled")
+		return msgErr("manual_not_enabled", nil, "manual control is not enabled")
 	}
 	var pump RelayOutput
 	switch stage {
@@ -551,7 +785,18 @@ func (c *Controller) ManualSetPump(stage int, on bool) error {
 	case 2:
 		pump = Pump2
 	default:
-		return fmt.Errorf("stage must be 1 or 2")
+		return msgErr("stage_invalid", nil, "stage must be 1 or 2")
+	}
+	if on {
+		c.mu.Lock()
+		faulted := c.phase == PhaseFault
+		c.mu.Unlock()
+		if faulted {
+			return msgErr("pump_blocked_by_fault", nil, "cannot start a pump while a fault is active - clear the fault first")
+		}
+		if err := c.sensorsReady(); err != nil {
+			return err
+		}
 	}
 	return c.io.SetRelay(pump, on)
 }
@@ -587,7 +832,7 @@ func (c *Controller) ManualJog(stage int, up bool, active bool) error {
 
 func (c *Controller) manualJogAt(stage int, up bool, active bool, now time.Time) error {
 	if !c.ManualMode() {
-		return fmt.Errorf("manual control is not enabled")
+		return msgErr("manual_not_enabled", nil, "manual control is not enabled")
 	}
 	cfg, err := c.manualStageConfig(stage)
 	if err != nil {
@@ -687,6 +932,17 @@ func (c *Controller) superviseJob() {
 		return
 	}
 
+	// With nozzle sensors in use, the nozzle the fill started on must
+	// stay the only one lifted - a returned nozzle, or a second one
+	// lifted, mid-fill stops it.
+	if c.live.Snapshot().Nozzles.SensorsEnabled {
+		if n, err := c.detectNozzle(); err != nil || n != job.Nozzle {
+			reason := msg("nozzle_changed", map[string]any{"nozzle": fmt.Sprint(int(job.Nozzle))}, "the %d bar nozzle is no longer the only nozzle lifted", job.Nozzle)
+			c.raiseFaultKey("nozzle_changed", emergencyStop(reason))
+			return
+		}
+	}
+
 	outP, err := c.outputPressureBar()
 	if err != nil {
 		return
@@ -708,11 +964,14 @@ func (c *Controller) superviseJob() {
 	// pressure differential estimate, not a scale reading (see
 	// MassInVolumeKg in gas.go) - not something to hand to a billing/
 	// accounting system as fact, so skip recording it entirely.
-	if c.dispenseLog != nil && c.live.Snapshot().MassMeasurementEnabled {
-		if err := c.dispenseLog.Record(DispenseRecord{
-			Timestamp: time.Now(), CustomerCode: job.CustomerCode, DeliveredMassKg: mass,
+	if c.dispenses != nil && c.live.Snapshot().MassMeasurementEnabled {
+		c.mu.Lock()
+		customer := c.customer
+		c.mu.Unlock()
+		if err := c.dispenses.Record(DispenseRecord{
+			Timestamp: time.Now(), CustomerID: customer.ID, CustomerName: customer.Name, DeliveredMassKg: mass,
 		}); err != nil {
-			log.Printf("failed to record dispense: %v", err)
+			logErrorf("failed to record dispense: %v", err)
 		}
 	}
 
@@ -745,7 +1004,10 @@ func (c *Controller) superviseJob() {
 var allRelays = []RelayOutput{Valve1A, Valve1B, Valve2A, Valve2B, VentValve, Pump1, Pump2, VentFan, CoolingFan}
 var allPressureSensors = []SensorInput{Hyd1Pressure, Hyd2Pressure, TankPressure, InterStagePressure, OutputPressure}
 var allTempSensors = []SensorInput{HydOilTemp, OutputTemp}
-var allDigitalInputs = []DigitalInput{HydraulicOilLevel, Motor1Powered, Motor2Powered}
+
+// allLimitSensors is every sensor with a min/max in SafetyConfig.Limits.
+var allLimitSensors = append(append([]SensorInput{}, allPressureSensors...), allTempSensors...)
+var allDigitalInputs = []DigitalInput{HydraulicOilLevel, Motor1Powered, Motor2Powered, HydrogenDetected, Nozzle350InUse, Nozzle700InUse}
 
 type ValveStatus struct {
 	Name string `json:"name"`
@@ -804,7 +1066,11 @@ func (c *Controller) Status() Status {
 	c.mu.Lock()
 	phase := c.phase
 	job := c.job
-	faults := append([]string{}, c.faults...)
+	var faults []string
+	for _, f := range c.faults {
+		faults = append(faults, fmt.Sprintf("[%s] %s", f.At.Format(time.RFC3339), f.Text))
+	}
+	faultDetails := append([]FaultRecord{}, c.faults...)
 	frozenMass := c.finalDeliveredMassKg
 	manualMode := c.manualMode
 	var started *time.Time
@@ -846,7 +1112,8 @@ func (c *Controller) Status() Status {
 		DeliveredMassKg: deliveredMass,
 		Stage1:          s1,
 		Stage2:          s2,
-		VentOpen:        vent, Faults: faults, StartedAt: started, ElapsedSec: elapsed,
+		VentOpen:        vent, Faults: faults, FaultDetails: faultDetails, StartedAt: started, ElapsedSec: elapsed,
 		ManualMode: manualMode,
+		Nozzles:    c.nozzleStatus(),
 	}
 }

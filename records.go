@@ -1,225 +1,175 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
-// DispenseRecord is one completed fill: how much hydrogen went out, and
-// who it was for, for reconciliation/billing against the customer code
-// entered on the public screen.
+// DispenseRecord is one completed fill: when, which customer, and how
+// much hydrogen went out - for billing/reconciliation. Deliberately has
+// no login code: the customer is identified by ID and name, captured at
+// the time of the fill, so a later rename in the codes file doesn't
+// rewrite history.
 type DispenseRecord struct {
+	ID              int64     `json:"id"`
+	Timestamp       time.Time `json:"timestamp"`
+	CustomerID      string    `json:"customerId"`
+	CustomerName    string    `json:"customerName"`
+	DeliveredMassKg float64   `json:"deliveredMassKg"`
+}
+
+// DispenseStore is the SQLite database of completed fills. Records are
+// kept permanently - never pruned, unlike HistoryStore's readings - and
+// read back by date range (see /api/records), so extracting twice gives
+// the same answer and a failed download loses nothing.
+type DispenseStore struct {
+	db *sql.DB
+}
+
+// NewDispenseStore opens (creating if necessary) the dispense database
+// at path. Like NewHistoryStore it fails fast on error - billing data
+// silently not being recorded is worse than a visible startup failure.
+func NewDispenseStore(path string) (*DispenseStore, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open dispense db %s: %w", path, err)
+	}
+	for _, stmt := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=FULL", // billing data - durability over speed; a fill is a rare write
+		"PRAGMA busy_timeout=5000",
+		`CREATE TABLE IF NOT EXISTS dispenses (
+			id            INTEGER PRIMARY KEY,
+			ts            INTEGER NOT NULL,
+			customer_id   TEXT NOT NULL,
+			customer_name TEXT NOT NULL,
+			delivered_kg  REAL NOT NULL
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_dispenses_ts ON dispenses(ts)",
+		"CREATE INDEX IF NOT EXISTS idx_dispenses_customer_ts ON dispenses(customer_id, ts)",
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("dispense db %s: %w", path, err)
+		}
+	}
+	return &DispenseStore{db: db}, nil
+}
+
+func (d *DispenseStore) Close() error { return d.db.Close() }
+
+// Record stores one completed fill.
+func (d *DispenseStore) Record(rec DispenseRecord) error {
+	_, err := d.db.Exec(`INSERT INTO dispenses (ts, customer_id, customer_name, delivered_kg) VALUES (?, ?, ?, ?)`,
+		toUnixMs(rec.Timestamp), rec.CustomerID, rec.CustomerName, rec.DeliveredMassKg)
+	if err != nil {
+		return fmt.Errorf("recording dispense: %w", err)
+	}
+	return nil
+}
+
+// Query returns fills with from <= timestamp < to, oldest first; a zero
+// from or to leaves that end open, and a non-empty customerID limits it
+// to that customer.
+func (d *DispenseStore) Query(from, to time.Time, customerID string) ([]DispenseRecord, error) {
+	q := `SELECT id, ts, customer_id, customer_name, delivered_kg FROM dispenses WHERE 1=1`
+	var args []any
+	if !from.IsZero() {
+		q += ` AND ts >= ?`
+		args = append(args, toUnixMs(from))
+	}
+	if !to.IsZero() {
+		q += ` AND ts < ?`
+		args = append(args, toUnixMs(to))
+	}
+	if customerID != "" {
+		q += ` AND customer_id = ?`
+		args = append(args, customerID)
+	}
+	q += ` ORDER BY ts, id`
+	rows, err := d.db.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying dispenses: %w", err)
+	}
+	defer rows.Close()
+	records := []DispenseRecord{}
+	for rows.Next() {
+		var r DispenseRecord
+		var ts int64
+		if err := rows.Scan(&r.ID, &ts, &r.CustomerID, &r.CustomerName, &r.DeliveredMassKg); err != nil {
+			return nil, fmt.Errorf("querying dispenses: %w", err)
+		}
+		r.Timestamp = fromUnixMs(ts)
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+// legacyDispenseRecord is a line of the old dispense-log.jsonl file,
+// which stored the raw login code.
+type legacyDispenseRecord struct {
 	Timestamp       time.Time `json:"timestamp"`
 	CustomerCode    string    `json:"customerCode"`
 	DeliveredMassKg float64   `json:"deliveredMassKg"`
 }
 
-// DispenseLog is an append-only, file-backed record of completed fills -
-// deliberately simple ("the database can be a file"): one JSON object
-// per line, so appending never needs to read the existing file, and a
-// partial/corrupt trailing line from a crash mid-write can't corrupt
-// earlier records.
-type DispenseLog struct {
-	mu   sync.Mutex
-	path string
-}
-
-func NewDispenseLog(path string) *DispenseLog {
-	return &DispenseLog{path: path}
-}
-
-// Record appends one completed fill.
-func (d *DispenseLog) Record(rec DispenseRecord) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	f, err := os.OpenFile(d.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("opening %s: %w", d.path, err)
-	}
-	defer f.Close()
-
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return fmt.Errorf("encoding record: %w", err)
-	}
-	line = append(line, '\n')
-	if _, err := f.Write(line); err != nil {
-		return fmt.Errorf("writing %s: %w", d.path, err)
-	}
-	return nil
-}
-
-// DrainAll returns every recorded fill and clears the file - the
-// intended usage is a remote billing/accounting system periodically
-// polling this to collect fills since it last asked, with the file
-// cleared each time so nothing is double-counted. A malformed line
-// (e.g. a torn write from a crash) is skipped rather than failing the
-// whole drain.
-func (d *DispenseLog) DrainAll() ([]DispenseRecord, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	data, err := os.ReadFile(d.path)
+// ImportLegacyDispenseLog moves any records left in the old
+// dispense-log.jsonl file (from before this database existed) into the
+// database, translating each login code to its customer via codes, and
+// then deletes the file - it holds login codes, which must not be
+// stored anywhere but the codes file. A code that's no longer on the
+// list is recorded as customer "UNKNOWN". Returns how many records were
+// imported; a missing or empty file is not an error. The import is one
+// transaction: if anything fails, nothing is imported and the file is
+// left in place for the next startup to retry, without duplicates.
+func (d *DispenseStore) ImportLegacyDispenseLog(path string, codes *ValidCodes) (int, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return 0, nil
 		}
-		return nil, fmt.Errorf("reading %s: %w", d.path, err)
+		return 0, fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	var records []DispenseRecord
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("importing %s: %w", path, err)
+	}
+	defer tx.Rollback()
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		var rec DispenseRecord
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			continue
+		var old legacyDispenseRecord
+		if err := json.Unmarshal([]byte(line), &old); err != nil {
+			continue // a torn write from a crash - nothing recoverable
 		}
-		records = append(records, rec)
-	}
-
-	if err := os.WriteFile(d.path, nil, 0600); err != nil {
-		return records, fmt.Errorf("clearing %s: %w", d.path, err)
-	}
-	return records, nil
-}
-
-// CodeEntry is one admin-maintained customer code -> name mapping.
-type CodeEntry struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
-}
-
-// ValidCodes is the admin-maintained allow-list of customer codes a fill
-// may be started with, each mapped to the customer's name - shown as a
-// welcome message on the customer screen once their code is recognised.
-// Backed by a plain-text file (one "code,Full Name" pair per line,
-// "#"-prefixed lines ignored) so it's hand-editable on the device too,
-// matching config.json's philosophy. Missing file = empty list, not an
-// error, same as LoadConfigFile's "no file yet" handling.
-type ValidCodes struct {
-	mu    sync.RWMutex
-	codes map[string]string // code -> full name
-	path  string
-}
-
-func LoadValidCodes(path string) (*ValidCodes, error) {
-	v := &ValidCodes{path: path, codes: map[string]string{}}
-	if err := v.reload(); err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-func (v *ValidCodes) reload() error {
-	data, err := os.ReadFile(v.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			v.mu.Lock()
-			v.codes = map[string]string{}
-			v.mu.Unlock()
-			return nil
+		rec := DispenseRecord{Timestamp: old.Timestamp, DeliveredMassKg: old.DeliveredMassKg}
+		if old.CustomerCode != "" {
+			rec.CustomerID = "UNKNOWN"
+			if codes != nil {
+				if c, ok := codes.Lookup(old.CustomerCode); ok {
+					rec.CustomerID, rec.CustomerName = c.ID, c.Name
+				}
+			}
 		}
-		return fmt.Errorf("reading %s: %w", v.path, err)
-	}
-	codes := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+		if _, err := tx.Exec(`INSERT INTO dispenses (ts, customer_id, customer_name, delivered_kg) VALUES (?, ?, ?, ?)`,
+			toUnixMs(rec.Timestamp), rec.CustomerID, rec.CustomerName, rec.DeliveredMassKg); err != nil {
+			return 0, fmt.Errorf("importing %s: %w", path, err)
 		}
-		parts := strings.SplitN(line, ",", 2)
-		code := strings.TrimSpace(parts[0])
-		if code == "" {
-			continue
-		}
-		name := ""
-		if len(parts) > 1 {
-			name = strings.TrimSpace(parts[1])
-		}
-		codes[code] = name
+		n++
 	}
-	v.mu.Lock()
-	v.codes = codes
-	v.mu.Unlock()
-	return nil
-}
-
-// Lookup returns the customer's name for code and whether it's on the
-// allow-list at all - the backing call for both Controller.Start's
-// enforcement and the customer screen's welcome-message lookup.
-func (v *ValidCodes) Lookup(code string) (name string, ok bool) {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	name, ok = v.codes[code]
-	return name, ok
-}
-
-// IsValid reports whether code is on the allow-list.
-func (v *ValidCodes) IsValid(code string) bool {
-	_, ok := v.Lookup(code)
-	return ok
-}
-
-// List returns the current code/name pairs, sorted by code, for the
-// admin screen.
-func (v *ValidCodes) List() []CodeEntry {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	out := make([]CodeEntry, 0, len(v.codes))
-	for c, n := range v.codes {
-		out = append(out, CodeEntry{Code: c, Name: n})
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("importing %s: %w", path, err)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
-	return out
-}
-
-// SetAll validates and replaces the entire list, persisting it to file.
-// Rejects (and leaves the existing list untouched) if any entry's code
-// isn't valid, the same 1-10-digit rule Controller.Start enforces on the
-// code itself. Blank rows (no code and no name - e.g. leftover from
-// editing the admin textarea) are silently skipped.
-func (v *ValidCodes) SetAll(entries []CodeEntry) error {
-	seen := map[string]string{}
-	for _, e := range entries {
-		code := strings.TrimSpace(e.Code)
-		name := strings.TrimSpace(e.Name)
-		if code == "" && name == "" {
-			continue
-		}
-		if !isValidCustomerCode(code) {
-			return fmt.Errorf("%q is not a valid code (must be 1-10 digits)", code)
-		}
-		seen[code] = name
+	if err := os.Remove(path); err != nil {
+		return n, fmt.Errorf("imported %d record(s) but could not delete %s: %w", n, path, err)
 	}
-
-	codes := make([]string, 0, len(seen))
-	for c := range seen {
-		codes = append(codes, c)
-	}
-	sort.Strings(codes)
-
-	var buf strings.Builder
-	for _, c := range codes {
-		buf.WriteString(c)
-		buf.WriteString(",")
-		buf.WriteString(seen[c])
-		buf.WriteString("\n")
-	}
-	if err := os.WriteFile(v.path, []byte(buf.String()), 0600); err != nil {
-		return fmt.Errorf("writing %s: %w", v.path, err)
-	}
-
-	v.mu.Lock()
-	v.codes = seen
-	v.mu.Unlock()
-	return nil
+	return n, nil
 }

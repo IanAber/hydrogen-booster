@@ -55,11 +55,22 @@ type StageConfigDTO struct {
 	PressureFilterSamples int     `json:"pressureFilterSamples"`
 }
 
+type SensorLimitDTO struct {
+	Sensor string  `json:"sensor"` // sensor name (see io.go SensorInput.String)
+	Min    float64 `json:"min"`
+	Max    float64 `json:"max"`
+}
+
 type SafetyConfigDTO struct {
-	MaxHydraulicPressureBar float64 `json:"maxHydraulicPressureBar"`
-	MaxHydrogenPressureBar  float64 `json:"maxHydrogenPressureBar"`
-	MaxTempC                float64 `json:"maxTempC"`
-	SensorMaxAgeMs          int     `json:"sensorMaxAgeMs"`
+	SensorLimits   []SensorLimitDTO `json:"sensorLimits"`
+	SensorMaxAgeMs int              `json:"sensorMaxAgeMs"`
+
+	// Single max limits from config files saved before per-sensor
+	// limits existed - read only to migrate those files (see
+	// safetyFromDTO), never written back out.
+	MaxHydraulicPressureBar *float64 `json:"maxHydraulicPressureBar,omitempty"`
+	MaxHydrogenPressureBar  *float64 `json:"maxHydrogenPressureBar,omitempty"`
+	MaxTempC                *float64 `json:"maxTempC,omitempty"`
 }
 
 type TankConfigDTO struct {
@@ -158,6 +169,7 @@ type ConfigDTO struct {
 	SystemName                  string                      `json:"systemName"`
 	Language                    string                      `json:"language"`
 	MassMeasurementEnabled      bool                        `json:"massMeasurementEnabled"`
+	Nozzles                     NozzleConfigDTO             `json:"nozzles"`
 	PollPeriodMs                int                         `json:"pollPeriodMs"`
 	Stage1                      StageConfigDTO              `json:"stage1"`
 	Stage2                      StageConfigDTO              `json:"stage2"`
@@ -174,6 +186,14 @@ type ConfigDTO struct {
 	RelayModule                 RelayModuleConfigDTO        `json:"relayModule"`
 	DigitalInputModule          DigitalInputModuleConfigDTO `json:"digitalInputModule"`
 	FlowModule                  FlowModuleConfigDTO         `json:"flowModule"`
+}
+
+// NozzleConfigDTO's Has700Bar is a pointer so a config file saved
+// before this setting existed (no "has700Bar" key) keeps the default of
+// true rather than reading as false.
+type NozzleConfigDTO struct {
+	Has700Bar      *bool `json:"has700Bar,omitempty"`
+	SensorsEnabled bool  `json:"sensorsEnabled"`
 }
 
 func stageToDTO(s StageConfig) StageConfigDTO {
@@ -256,6 +276,59 @@ func relayModuleToDTO(c RelayModuleConfig) RelayModuleConfigDTO {
 	return dto
 }
 
+func safetyToDTO(c SafetyConfig) SafetyConfigDTO {
+	dto := SafetyConfigDTO{SensorMaxAgeMs: int(c.SensorMaxAge / time.Millisecond)}
+	for _, sn := range allLimitSensors {
+		l := c.Limits[sn]
+		dto.SensorLimits = append(dto.SensorLimits, SensorLimitDTO{Sensor: sn.String(), Min: l.Min, Max: l.Max})
+	}
+	return dto
+}
+
+// safetyFromDTO validates and merges the safety section. Limits start
+// from base, so a sensor missing from dto.SensorLimits keeps its
+// current range; a config file saved before per-sensor limits existed
+// has its old single max limits copied onto the matching sensors first.
+func safetyFromDTO(base SafetyConfig, dto SafetyConfigDTO) (SafetyConfig, error) {
+	if dto.SensorMaxAgeMs < 0 {
+		return base, fmt.Errorf("sensor max age cannot be negative")
+	}
+	out := base
+	out.SensorMaxAge = time.Duration(dto.SensorMaxAgeMs) * time.Millisecond
+
+	if v := dto.MaxHydraulicPressureBar; v != nil {
+		out.Limits[Hyd1Pressure].Max = *v
+		out.Limits[Hyd2Pressure].Max = *v
+	}
+	if v := dto.MaxHydrogenPressureBar; v != nil {
+		out.Limits[OutputPressure].Max = *v
+	}
+	if v := dto.MaxTempC; v != nil {
+		for _, sn := range allTempSensors {
+			out.Limits[sn].Max = *v
+		}
+	}
+
+	seen := map[SensorInput]bool{}
+	for _, l := range dto.SensorLimits {
+		sn, ok := ParseSensorInput(l.Sensor)
+		if !ok {
+			return base, fmt.Errorf("sensor limits: %q is not a valid sensor", l.Sensor)
+		}
+		if seen[sn] {
+			return base, fmt.Errorf("sensor limits: %s is listed more than once", sn)
+		}
+		seen[sn] = true
+		out.Limits[sn] = SensorLimit{Min: l.Min, Max: l.Max}
+	}
+	for _, sn := range allLimitSensors {
+		if l := out.Limits[sn]; l.Min >= l.Max {
+			return base, fmt.Errorf("%s: minimum (%g %s) must be below maximum (%g %s)", sn.Label(), l.Min, sn.Unit(), l.Max, sn.Unit())
+		}
+	}
+	return out, nil
+}
+
 func digitalInputModuleToDTO(c DigitalInputModuleConfig) DigitalInputModuleConfigDTO {
 	dto := DigitalInputModuleConfigDTO{Chip: c.Chip, LiveEnabled: c.LiveEnabled}
 	for _, ch := range c.Channels {
@@ -289,18 +362,14 @@ func ToDTO(c Config) ConfigDTO {
 		SystemName:                  c.SystemName,
 		Language:                    c.Language,
 		MassMeasurementEnabled:      c.MassMeasurementEnabled,
+		Nozzles:                     NozzleConfigDTO{Has700Bar: &c.Nozzles.Has700Bar, SensorsEnabled: c.Nozzles.SensorsEnabled},
 		PollPeriodMs:                int(c.PollPeriod / time.Millisecond),
 		Stage1:                      stageToDTO(c.Stage1),
 		Stage2:                      stageToDTO(c.Stage2),
 		Homing:                      HomingConfigDTO{DurationMs: int(c.Homing.Duration / time.Millisecond)},
 		PressureBlankTimeMs:         int(c.PressureBlankTime / time.Millisecond),
 		OutputPressureFilterSamples: c.OutputPressureFilterSamples,
-		Safety: SafetyConfigDTO{
-			MaxHydraulicPressureBar: c.Safety.MaxHydraulicPressureBar,
-			MaxHydrogenPressureBar:  c.Safety.MaxHydrogenPressureBar,
-			MaxTempC:                c.Safety.MaxTempC,
-			SensorMaxAgeMs:          int(c.Safety.SensorMaxAge / time.Millisecond),
-		},
+		Safety:                      safetyToDTO(c.Safety),
 		Tank: TankConfigDTO{
 			VolumeLitres:       c.Tank.VolumeLitres,
 			NominalPressureBar: c.Tank.NominalPressureBar,
@@ -364,11 +433,9 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 	if err := validateStageDTO("stage2", dto.Stage2); err != nil {
 		return base, err
 	}
-	if dto.Safety.MaxHydraulicPressureBar <= 0 || dto.Safety.MaxHydrogenPressureBar <= 0 || dto.Safety.MaxTempC <= 0 {
-		return base, fmt.Errorf("safety limits must be greater than zero")
-	}
-	if dto.Safety.SensorMaxAgeMs < 0 {
-		return base, fmt.Errorf("sensor max age cannot be negative")
+	safetyCfg, err := safetyFromDTO(base.Safety, dto.Safety)
+	if err != nil {
+		return base, err
 	}
 	if dto.Tank.VolumeLitres <= 0 {
 		return base, fmt.Errorf("tank volume must be greater than zero")
@@ -404,16 +471,17 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 		out.Language = lang
 	}
 	out.MassMeasurementEnabled = dto.MassMeasurementEnabled
+	if dto.Nozzles.Has700Bar != nil {
+		out.Nozzles.Has700Bar = *dto.Nozzles.Has700Bar
+	}
+	out.Nozzles.SensorsEnabled = dto.Nozzles.SensorsEnabled
 	out.PollPeriod = time.Duration(dto.PollPeriodMs) * time.Millisecond
 	out.Stage1 = applyStage(base.Stage1, dto.Stage1)
 	out.Stage2 = applyStage(base.Stage2, dto.Stage2)
 	out.Homing.Duration = time.Duration(dto.Homing.DurationMs) * time.Millisecond
 	out.PressureBlankTime = time.Duration(dto.PressureBlankTimeMs) * time.Millisecond
 	out.OutputPressureFilterSamples = dto.OutputPressureFilterSamples
-	out.Safety.MaxHydraulicPressureBar = dto.Safety.MaxHydraulicPressureBar
-	out.Safety.MaxHydrogenPressureBar = dto.Safety.MaxHydrogenPressureBar
-	out.Safety.MaxTempC = dto.Safety.MaxTempC
-	out.Safety.SensorMaxAge = time.Duration(dto.Safety.SensorMaxAgeMs) * time.Millisecond
+	out.Safety = safetyCfg
 	out.Tank.VolumeLitres = dto.Tank.VolumeLitres
 	out.Tank.NominalPressureBar = dto.Tank.NominalPressureBar
 	out.Tank.NominalTempC = dto.Tank.NominalTempC
@@ -450,6 +518,26 @@ func FromDTO(base Config, dto ConfigDTO) (Config, error) {
 		return base, err
 	}
 	out.FlowModule = flowCfg
+
+	// The nozzle sensors must be wired before they can be relied on to
+	// pick the nozzle - otherwise no fill could ever start.
+	if out.Nozzles.SensorsEnabled {
+		need := []DigitalInput{Nozzle350InUse}
+		if out.Nozzles.Has700Bar {
+			need = append(need, Nozzle700InUse)
+		}
+		for _, d := range need {
+			assigned := false
+			for _, ch := range out.DigitalInputModule.Channels {
+				if ch.Enabled && ch.Assigned == d {
+					assigned = true
+				}
+			}
+			if !assigned {
+				return base, fmt.Errorf("nozzle sensors are enabled, but %s is not assigned to an enabled digital input channel", d)
+			}
+		}
+	}
 
 	return out, nil
 }
@@ -681,8 +769,12 @@ func digitalInputModuleFromDTO(base DigitalInputModuleConfig, dto DigitalInputMo
 	if strings.TrimSpace(dto.Chip) == "" {
 		return base, fmt.Errorf("GPIO digital input chip path cannot be empty")
 	}
-	if len(dto.Channels) != DigitalInputChannelCount {
-		return base, fmt.Errorf("digital input module must have exactly %d channels", DigitalInputChannelCount)
+	// A config file saved before a signal was added (e.g.
+	// HydrogenDetected) has fewer channels - accept it and leave the
+	// missing slots disabled, rather than failing the whole load and
+	// silently falling back to built-in defaults for every setting.
+	if len(dto.Channels) > DigitalInputChannelCount {
+		return base, fmt.Errorf("digital input module must have at most %d channels", DigitalInputChannelCount)
 	}
 
 	seenSignal := map[DigitalInput]bool{}

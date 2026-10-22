@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydrogen Booster Log</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #171f24; --panel2: #1e2830; --border: #2a3742;
+    --text: #e6edf2; --muted: #8b9aa5; --accent: #3aa0ff; --good: #35c26b;
+    --warn: #f2b53d; --bad: #ef4b4b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  .banner {
+    background: #000; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 24px;
+  }
+  .banner-logo { height: 40px; width: auto; display: block; }
+  .banner-title {
+    margin: 0; color: #fff; font-size: 28px; font-weight: 700;
+    letter-spacing: .02em; text-align: left;
+  }
+  @media (max-width: 600px) { .banner-title { font-size: 20px; } }
+  header {
+    padding: 12px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+  .controls select, .controls button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px;
+  }
+  .controls button { cursor: pointer; }
+  .controls button:hover { border-color: var(--accent); }
+  .controls label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .controls input[type=checkbox] { accent-color: var(--accent); }
+  #status { color: var(--muted); font-size: 13px; padding: 8px 24px; }
+  #log {
+    flex: 1; overflow: auto; margin: 0 24px 16px; padding: 8px 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5;
+  }
+  .entry { display: flex; gap: 12px; padding: 0 12px; white-space: pre-wrap; word-break: break-word; }
+  .entry:hover { background: var(--panel2); }
+  .entry .ts { color: var(--muted); flex: none; }
+  .entry .lvl { flex: none; width: 4.5em; font-weight: 600; }
+  .entry.err .lvl, .entry.err .msg { color: var(--bad); }
+  .entry.warn .lvl, .entry.warn .msg { color: var(--warn); }
+  .entry.info .lvl { color: var(--muted); }
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="banner">
+  <h1 class="banner-title" id="bannerTitle">Hydrogen Booster</h1>
+  <img src="/images/logo.png" alt="Logo" class="banner-logo">
+</div>
+
+<header>
+  <h1 data-i18n="log_page_title">System Log</h1>
+  <div class="controls">
+    <select id="range" onchange="loadLog()">
+      <option value="all" data-i18n="log_range_all">All</option>
+      <option value="7d" data-i18n="log_range_7d">Last 7 days</option>
+      <option value="24h" data-i18n="log_range_24h">Last 24 hours</option>
+      <option value="today" data-i18n="log_range_today">Today</option>
+    </select>
+    <label><input type="checkbox" id="problems" onchange="loadLog()"> <span data-i18n="log_problems_only">Warnings and errors only</span></label>
+    <label><input type="checkbox" id="autoRefresh" onchange="setAutoRefresh()"> <span data-i18n="log_auto_refresh">Auto-refresh</span></label>
+    <button onclick="loadLog()" data-i18n="log_refresh">Refresh</button>
+  </div>
+</header>
+
+<div id="status">&nbsp;</div>
+<div id="log"></div>
+
+<script>
+// Severity is journald's syslog priority (see /api/log): 0-3 are
+// errors, 4 warnings, anything else informational.
+function severity(prio) {
+  const p = parseInt(prio, 10);
+  if (p <= 3) return { cls: 'err', key: 'log_level_error' };
+  if (p === 4) return { cls: 'warn', key: 'log_level_warning' };
+  return { cls: 'info', key: 'log_level_info' };
+}
+
+let loading = false;
+
+// loadLog fetches the whole selected range and renders it oldest
+// first, scrolled to the newest entry at the bottom. Built with
+// textContent throughout - log messages can include raw driver/OS
+// error strings, which must never be parsed as HTML.
+async function loadLog() {
+  if (loading) return;
+  loading = true;
+  const status = document.getElementById('status');
+  const logEl = document.getElementById('log');
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  status.textContent = t('log_loading');
+  try {
+    const params = new URLSearchParams({ range: document.getElementById('range').value });
+    if (document.getElementById('problems').checked) params.set('problems', '1');
+    const res = await fetch('/api/log?' + params);
+    const text = await res.text();
+    if (!res.ok) {
+      status.textContent = t('log_error') + ' ' + text;
+      return;
+    }
+    const lines = text.split('\n').filter(l => l);
+    const frag = document.createDocumentFragment();
+    for (const line of lines) {
+      const [ts, prio, ...rest] = line.split('\t');
+      const sev = severity(prio);
+      const row = document.createElement('div');
+      row.className = 'entry ' + sev.cls;
+      const tsEl = document.createElement('span'); tsEl.className = 'ts'; tsEl.textContent = ts;
+      const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = t(sev.key);
+      const msg = document.createElement('span'); msg.className = 'msg'; msg.textContent = rest.join('\t');
+      row.append(tsEl, lvl, msg);
+      frag.appendChild(row);
+    }
+    logEl.replaceChildren(frag);
+    status.textContent = lines.length
+      ? t('log_entries').replace('{n}', lines.length.toLocaleString()) + ' · ' + t('log_updated') + ' ' + new Date().toLocaleTimeString()
+      : t('log_no_entries');
+    // Jump to the newest entry on first load, and keep following it on
+    // refresh unless the user has scrolled up to read something older.
+    if (atBottom || !logEl.dataset.loaded) logEl.scrollTop = logEl.scrollHeight;
+    logEl.dataset.loaded = '1';
+  } catch (e) {
+    status.textContent = t('log_error') + ' ' + e;
+  } finally {
+    loading = false;
+  }
+}
+
+let refreshTimer = null;
+function setAutoRefresh() {
+  clearInterval(refreshTimer);
+  refreshTimer = document.getElementById('autoRefresh').checked ? setInterval(loadLog, 5000) : null;
+}
+
+initI18n().then(() => {
+  document.title = t('log_page_title') + ' - Hydrogen Booster';
+  loadLog();
+});
+</script>
+
+</body>
+</html>

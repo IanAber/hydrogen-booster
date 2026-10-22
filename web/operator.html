@@ -114,9 +114,10 @@
           <button id="nozzle350" onclick="selectNozzle(350)">350 Bar</button>
           <button id="nozzle700" onclick="selectNozzle(700)">700 Bar</button>
         </div>
+        <div class="hint" id="nozzleHint" style="font-size:12px; color:var(--muted); margin-top:4px;"></div>
 
         <label for="targetPressure" data-i18n="idx_final_pressure">Final pressure (bar)</label>
-        <input type="number" id="targetPressure" min="1" step="1" value="350">
+        <input type="number" id="targetPressure" min="1" max="700" step="1" value="350" onchange="clampTargetPressure()">
 
         <div id="massAmountGroup">
           <label for="targetMass" data-i18n="idx_amount_hydrogen">Amount of hydrogen (kg)</label>
@@ -204,6 +205,50 @@ function selectNozzle(n) {
 }
 selectNozzle(350);
 
+// --- Nozzle options (from /api/status's "nozzles") ---------------------
+// has700Bar: offer the 700 bar nozzle at all, and cap the pressure field
+// at 350 when it's not fitted. sensorsEnabled: the nozzle is picked by
+// the holster proximity sensors, not these buttons - they become
+// read-only indicators of the lifted nozzle (detected; 0 = none, with
+// problem explaining why).
+let nozzleStatus = { has700Bar: true, sensorsEnabled: false, detected: 0 };
+
+function applyNozzleStatus(ns) {
+  if (!ns) return;
+  const prevDetected = nozzleStatus.detected;
+  nozzleStatus = ns;
+  document.getElementById('nozzle700').style.display = ns.has700Bar ? '' : 'none';
+  const maxBar = ns.has700Bar ? 700 : 350;
+  const p = document.getElementById('targetPressure');
+  p.max = maxBar;
+  if (parseFloat(p.value) > maxBar) p.value = maxBar;
+
+  if (ns.sensorsEnabled) {
+    // Follow the lifted nozzle - only re-select on a change, so a
+    // pressure the user typed isn't overwritten on every poll.
+    if (ns.detected && ns.detected !== prevDetected) selectNozzle(ns.detected);
+    document.getElementById('nozzle350').classList.toggle('selected', ns.detected === 350);
+    document.getElementById('nozzle700').classList.toggle('selected', ns.detected === 700);
+    document.getElementById('nozzleHint').textContent = ns.detected ? t('idx_nozzle_auto_hint') : translateMessage(ns.problem);
+  } else {
+    if (!ns.has700Bar && selectedNozzle === 700) selectNozzle(350);
+    document.getElementById('nozzleHint').textContent = '';
+  }
+}
+
+// activeNozzle is the nozzle a start request uses - the lifted one when
+// sensors decide (0 = none, so Start stays disabled), else the button.
+function activeNozzle() {
+  return nozzleStatus.sensorsEnabled ? nozzleStatus.detected : selectedNozzle;
+}
+
+// clampTargetPressure keeps a typed pressure within the nozzle's rating.
+function clampTargetPressure() {
+  const p = document.getElementById('targetPressure');
+  const max = activeNozzle() || 350;
+  if (parseFloat(p.value) > max) p.value = max;
+}
+
 async function startJob() {
   document.getElementById('errorMsg').textContent = '';
   const body = {
@@ -211,11 +256,11 @@ async function startJob() {
     // With mass measurement disabled, Amount is hidden - its stale DOM
     // value must never be read; every fill is pressure-only.
     targetMassKg: massMeasurementEnabled ? parseFloat(document.getElementById('targetMass').value) : 999,
-    nozzle: selectedNozzle,
+    nozzle: activeNozzle(),
   };
   const res = await fetch('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (!res.ok) {
-    document.getElementById('errorMsg').textContent = await res.text();
+    document.getElementById('errorMsg').textContent = await responseErrorText(res);
   }
 }
 
@@ -247,6 +292,7 @@ async function poll() {
     pill.textContent = t(phaseKeys[s.phase] || s.phase);
     pill.style.background = phaseColors[s.phase] || '#26323b';
     pill.style.color = (s.phase === 'idle') ? 'var(--text)' : '#08131c';
+    applyNozzleStatus(s.nozzles);
 
     document.getElementById('outP').textContent = fmt(s.outputPressureBar) + ' bar';
     document.getElementById('outT').textContent = fmt(s.outputTempC) + ' \u00b0C';
@@ -278,13 +324,23 @@ async function poll() {
 
     const faultList = document.getElementById('faultList');
     if (s.faults && s.faults.length) {
-      faultList.innerHTML = s.faults.map(f => `<li>${f}</li>`).join('');
+      // Built with textContent - fault text can include raw driver
+      // error strings, which must never be parsed as HTML.
+      faultList.innerHTML = '';
+      const times = (s.faultDetails || []).map(f => new Date(f.at).toLocaleTimeString());
+      faultMessages(s).forEach((text, i) => {
+        const li = document.createElement('li');
+        li.textContent = times[i] ? `[${times[i]}] ${text}` : text;
+        faultList.appendChild(li);
+      });
     } else {
       faultList.innerHTML = `<li style="color:var(--muted)">${t('idx_none')}</li>`;
     }
 
     const running = s.phase === 'filling' || s.phase === 'venting';
-    document.getElementById('startBtn').disabled = running || s.phase === 'fault' || !!s.manualMode;
+    document.getElementById('startBtn').disabled = running || s.phase === 'fault' || !!s.manualMode || !activeNozzle();
+    document.getElementById('nozzle350').disabled = running || nozzleStatus.sensorsEnabled;
+    document.getElementById('nozzle700').disabled = running || nozzleStatus.sensorsEnabled;
     document.getElementById('stopBtn').disabled = !running;
     document.getElementById('clearFaultBtn').style.display = (s.phase === 'fault') ? 'block' : 'none';
     document.getElementById('manualModeNotice').style.display = s.manualMode ? '' : 'none';

@@ -2,89 +2,146 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestDispenseLogRecordAndDrain(t *testing.T) {
-	path := t.TempDir() + "/dispense-log.jsonl"
-	d := NewDispenseLog(path)
-
-	if err := d.Record(DispenseRecord{CustomerCode: "5551234567", DeliveredMassKg: 1.234}); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.Record(DispenseRecord{CustomerCode: "5559876543", DeliveredMassKg: 2.5}); err != nil {
-		t.Fatal(err)
-	}
-
-	records, err := d.DrainAll()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 2 {
-		t.Fatalf("got %d records, want 2", len(records))
-	}
-	if records[0].CustomerCode != "5551234567" || records[0].DeliveredMassKg != 1.234 {
-		t.Errorf("records[0] = %+v", records[0])
-	}
-	if records[1].CustomerCode != "5559876543" || records[1].DeliveredMassKg != 2.5 {
-		t.Errorf("records[1] = %+v", records[1])
+func TestDispenseStoreRecordAndQueryByRange(t *testing.T) {
+	d := newTestDispenseStore(t)
+	day := func(n int) time.Time { return time.Date(2026, 10, n, 12, 0, 0, 0, time.UTC) }
+	for _, r := range []DispenseRecord{
+		{Timestamp: day(20), CustomerID: "ACME-001", CustomerName: "Acme Haulage", DeliveredMassKg: 1.5},
+		{Timestamp: day(21), CustomerID: "ACME-002", CustomerName: "Bob Smith", DeliveredMassKg: 2.25},
+		{Timestamp: day(22), CustomerID: "ACME-001", CustomerName: "Acme Haulage", DeliveredMassKg: 3},
+	} {
+		if err := d.Record(r); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// Draining must clear the file - a second drain gets nothing back.
-	again, err := d.DrainAll()
-	if err != nil {
-		t.Fatal(err)
+	all, err := d.Query(time.Time{}, time.Time{}, "")
+	if err != nil || len(all) != 3 {
+		t.Fatalf("all: %d records, err %v", len(all), err)
 	}
-	if len(again) != 0 {
-		t.Errorf("expected an empty drain after clearing, got %d records", len(again))
+	if all[0].CustomerID != "ACME-001" || all[0].DeliveredMassKg != 1.5 || !all[0].Timestamp.Equal(day(20)) {
+		t.Errorf("all[0] = %+v", all[0])
+	}
+
+	// from inclusive, to exclusive.
+	mid, _ := d.Query(day(21), day(22), "")
+	if len(mid) != 1 || mid[0].CustomerID != "ACME-002" {
+		t.Errorf("range query = %+v", mid)
+	}
+
+	acme, _ := d.Query(time.Time{}, time.Time{}, "ACME-001")
+	if len(acme) != 2 {
+		t.Errorf("customer query = %+v", acme)
+	}
+
+	// Reading doesn't remove anything.
+	again, _ := d.Query(time.Time{}, time.Time{}, "")
+	if len(again) != 3 {
+		t.Errorf("records should be kept after reading, got %d", len(again))
 	}
 }
 
-func TestDispenseLogDrainMissingFileIsEmptyNotError(t *testing.T) {
-	d := NewDispenseLog(t.TempDir() + "/does-not-exist.jsonl")
-	records, err := d.DrainAll()
+func TestImportLegacyDispenseLogTranslatesCodesAndDeletesFile(t *testing.T) {
+	dir := t.TempDir()
+	codes, err := LoadValidCodes(dir + "/valid-codes.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if records != nil {
-		t.Errorf("expected nil, got %v", records)
+	if err := codes.SetAll([]CodeEntry{{Code: "5551234567", CustomerID: "ACME-001", Name: "Acme Haulage"}}); err != nil {
+		t.Fatal(err)
+	}
+	legacy := dir + "/dispense-log.jsonl"
+	lines := `{"timestamp":"2026-10-20T12:00:00Z","customerCode":"5551234567","deliveredMassKg":1.5}
+not json
+{"timestamp":"2026-10-21T12:00:00Z","customerCode":"9999999999","deliveredMassKg":2}
+{"timestamp":"2026-10-22T12:00:00Z","customerCode":"","deliveredMassKg":3}
+`
+	if err := os.WriteFile(legacy, []byte(lines), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newTestDispenseStore(t)
+	n, err := d.ImportLegacyDispenseLog(legacy, codes)
+	if err != nil || n != 3 {
+		t.Fatalf("imported %d, err %v", n, err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Error("the old file holds login codes and must be deleted after import")
+	}
+	recs, _ := d.Query(time.Time{}, time.Time{}, "")
+	if len(recs) != 3 {
+		t.Fatalf("records = %+v", recs)
+	}
+	if recs[0].CustomerID != "ACME-001" || recs[0].CustomerName != "Acme Haulage" {
+		t.Errorf("known code: %+v", recs[0])
+	}
+	if recs[1].CustomerID != "UNKNOWN" {
+		t.Errorf("code no longer listed: %+v, want UNKNOWN", recs[1])
+	}
+	if recs[2].CustomerID != "" {
+		t.Errorf("no code: %+v, want empty customer", recs[2])
+	}
+
+	// Missing file: nothing to do.
+	if n, err := d.ImportLegacyDispenseLog(legacy, codes); err != nil || n != 0 {
+		t.Errorf("second import: n=%d err=%v", n, err)
 	}
 }
 
-func TestDispenseLogSkipsMalformedLine(t *testing.T) {
-	path := t.TempDir() + "/dispense-log.jsonl"
-	if err := os.WriteFile(path, []byte("not json\n{\"customerCode\":\"123\",\"deliveredMassKg\":1}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	d := NewDispenseLog(path)
-	records, err := d.DrainAll()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 1 || records[0].CustomerCode != "123" {
-		t.Errorf("got %+v, want one record for code 123", records)
-	}
-}
-
-func TestValidCodesLookupAndIsValid(t *testing.T) {
+func TestValidCodesLookupAndPersist(t *testing.T) {
 	path := t.TempDir() + "/valid-codes.txt"
-	if err := os.WriteFile(path, []byte("5551234567,Jane Doe\n5559876543,John Smith\n# a comment\n\n"), 0600); err != nil {
+	v, err := LoadValidCodes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetAll([]CodeEntry{
+		{Code: "5551234567", CustomerID: "ACME-001", Name: "Acme Haulage, Ltd"},
+		{Code: "4321", CustomerID: "ACME-002", Name: "Bob Smith"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	v2, err := LoadValidCodes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := v2.Lookup("5551234567")
+	if !ok || c.ID != "ACME-001" || c.Name != "Acme Haulage, Ltd" {
+		t.Errorf("Lookup = %+v, %v", c, ok)
+	}
+	if v2.IsValid("0000000000") {
+		t.Error("expected an unlisted code to be invalid")
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(data), codesFileHeader+"\n") {
+		t.Errorf("file should start with the format header:\n%s", data)
+	}
+}
+
+func TestValidCodesConvertsLegacyFile(t *testing.T) {
+	path := t.TempDir() + "/valid-codes.txt"
+	if err := os.WriteFile(path, []byte("5559876543,John Smith\n# a comment\n5551234567,Doe, Jane\n\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	v, err := LoadValidCodes(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	name, ok := v.Lookup("5551234567")
-	if !ok || name != "Jane Doe" {
-		t.Errorf("Lookup(5551234567) = %q, %v; want Jane Doe, true", name, ok)
+	// IDs are generated in code order; names with commas survive.
+	if c, _ := v.Lookup("5551234567"); c.ID != "C0001" || c.Name != "Doe, Jane" {
+		t.Errorf("5551234567 -> %+v", c)
 	}
-	if !v.IsValid("5559876543") {
-		t.Error("expected 5559876543 to be valid")
+	if c, _ := v.Lookup("5559876543"); c.ID != "C0002" || c.Name != "John Smith" {
+		t.Errorf("5559876543 -> %+v", c)
 	}
-	if v.IsValid("0000000000") {
-		t.Error("expected an unlisted code to be invalid")
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), codesFileHeader) || !strings.Contains(string(data), "5551234567,C0001,Doe, Jane") {
+		t.Errorf("file not rewritten in the new format:\n%s", data)
 	}
 }
 
@@ -93,75 +150,41 @@ func TestValidCodesMissingFileIsEmptyNotError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.IsValid("5551234567") {
-		t.Error("expected no codes to be valid against a missing file")
-	}
 	if len(v.List()) != 0 {
 		t.Errorf("expected an empty list, got %v", v.List())
 	}
 }
 
-func TestValidCodesSetAllPersistsAndReplaces(t *testing.T) {
-	path := t.TempDir() + "/valid-codes.txt"
-	v, err := LoadValidCodes(path)
+func TestValidCodesSetAllRejectsBadEntriesWithoutRevealingCode(t *testing.T) {
+	v, err := LoadValidCodes(t.TempDir() + "/valid-codes.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if err := v.SetAll([]CodeEntry{
-		{Code: "5551234567", Name: "Jane Doe"},
-		{Code: "5559876543", Name: "John Smith"},
-	}); err != nil {
+	good := CodeEntry{Code: "1234567890", CustomerID: "OK-1", Name: "OK"}
+	if err := v.SetAll([]CodeEntry{good}); err != nil {
 		t.Fatal(err)
 	}
-
-	if !v.IsValid("5551234567") {
-		t.Error("expected 5551234567 to be valid after SetAll")
+	for name, entries := range map[string][]CodeEntry{
+		"non-digit code": {{Code: "12a4", CustomerID: "X-1", Name: "Bad"}},
+		"missing ID":     {{Code: "5551234567", Name: "No ID"}},
+		"ID with comma":  {{Code: "5551234567", CustomerID: "A,B", Name: "Comma"}},
+		"duplicate ID":   {{Code: "5551234567", CustomerID: "dup", Name: "A"}, {Code: "5559876543", CustomerID: "DUP", Name: "B"}},
+		"duplicate code": {{Code: "5551234567", CustomerID: "A-1", Name: "A"}, {Code: "5551234567", CustomerID: "B-1", Name: "B"}},
+	} {
+		err := v.SetAll(entries)
+		if err == nil {
+			t.Errorf("%s: expected an error", name)
+			continue
+		}
+		for _, e := range entries {
+			if e.Code != "" && strings.Contains(err.Error(), e.Code) {
+				t.Errorf("%s: error %q reveals the login code", name, err)
+			}
+		}
 	}
-	list := v.List()
-	if len(list) != 2 {
-		t.Fatalf("got %d entries, want 2", len(list))
-	}
-
-	// A fresh load from disk must see the same data - confirms it was
-	// actually persisted, not just kept in memory.
-	v2, err := LoadValidCodes(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !v2.IsValid("5559876543") {
-		t.Error("expected persisted codes to survive a fresh load")
-	}
-
-	// Replacing entirely drops anything not in the new set.
-	if err := v.SetAll([]CodeEntry{{Code: "1112223333", Name: "New Customer"}}); err != nil {
-		t.Fatal(err)
-	}
-	if v.IsValid("5551234567") {
-		t.Error("expected the old code to be gone after SetAll replaced the list")
-	}
-	if !v.IsValid("1112223333") {
-		t.Error("expected the new code to be valid")
-	}
-}
-
-func TestValidCodesSetAllRejectsMalformedCode(t *testing.T) {
-	path := t.TempDir() + "/valid-codes.txt"
-	v, err := LoadValidCodes(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := v.SetAll([]CodeEntry{{Code: "1234567890", Name: "OK"}}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := v.SetAll([]CodeEntry{{Code: "12a4", Name: "Bad"}}); err == nil {
-		t.Error("expected an error for a non-digit code")
-	}
-	// The earlier good list must still be intact - a rejected SetAll
-	// shouldn't partially apply or wipe the existing data.
-	if !v.IsValid("1234567890") {
-		t.Error("expected the previous valid list to survive a rejected SetAll")
+	// A rejected SetAll leaves the earlier list intact.
+	if !v.IsValid(good.Code) {
+		t.Error("expected the previous list to survive a rejected SetAll")
 	}
 }
 
@@ -170,10 +193,7 @@ func TestValidCodesSetAllSkipsBlankRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.SetAll([]CodeEntry{
-		{Code: "1234567890", Name: "OK"},
-		{Code: "", Name: ""},
-	}); err != nil {
+	if err := v.SetAll([]CodeEntry{{Code: "1234567890", CustomerID: "OK-1", Name: "OK"}, {}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(v.List()) != 1 {

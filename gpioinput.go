@@ -42,6 +42,12 @@ type DigitalInputModule struct {
 	openSig   string // config signature the currently-open `lines` was opened for
 	portIndex map[DigitalInput]int
 	simValues map[DigitalInput]bool
+	// liveSince is when live data was switched on or the wiring last
+	// changed (zero while in simulation); lastOpenErr is why the lines
+	// last failed to open - see readForIO.
+	liveSince   time.Time
+	lastOpenErr string
+	errLog      errorLatch
 
 	stop chan struct{}
 }
@@ -86,6 +92,7 @@ func digitalInputConfigSignature(cfg DigitalInputModuleConfig) string {
 // this loop only opens or releases the line request as
 // LiveEnabled/wiring changes.
 func (m *DigitalInputModule) Run() {
+	pendingSig := "" // the wiring signature liveSince was last reset for
 	for {
 		select {
 		case <-m.stop:
@@ -97,16 +104,33 @@ func (m *DigitalInputModule) Run() {
 
 		if !cfg.LiveEnabled {
 			m.closeLines()
+			m.mu.Lock()
+			m.liveSince = time.Time{}
+			m.mu.Unlock()
+			pendingSig = ""
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 
 		if sig := digitalInputConfigSignature(cfg); sig != m.currentSignature() {
+			if sig != pendingSig {
+				pendingSig = sig
+				m.mu.Lock()
+				m.liveSince = time.Now()
+				m.mu.Unlock()
+			}
 			if err := m.openLines(cfg); err != nil {
-				log.Printf("Digital input module: %v", err)
+				m.errLog.report("Digital input module", err)
+				m.mu.Lock()
+				m.lastOpenErr = err.Error()
+				m.mu.Unlock()
 				time.Sleep(1 * time.Second)
 				continue
 			}
+			m.mu.Lock()
+			m.lastOpenErr = ""
+			m.mu.Unlock()
+			m.errLog.report("Digital input module", nil)
 			log.Printf("Digital input module: live data ON (%s)", cfg.Chip)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -213,6 +237,39 @@ func (m *DigitalInputModule) ReadDigitalInput(d DigitalInput) (value bool, ok bo
 	v, ok := m.simValues[d]
 	m.mu.Unlock()
 	return v, ok
+}
+
+// readForIO is CompositeIO's view of a reading - see
+// PressureModule.readForIO; while live, every digital input is this
+// module's responsibility. GPIO reads are synchronous, so there's no
+// staleness - only a short grace period while the lines are (re)opened.
+func (m *DigitalInputModule) readForIO(d DigitalInput) (value bool, handled bool, err error) {
+	snap := m.live.Snapshot()
+	cfg := snap.DigitalInputModule
+	if !cfg.LiveEnabled {
+		v, ok := m.ReadDigitalInput(d)
+		return v, ok, nil
+	}
+	if _, assigned := m.assignedChannel(cfg, d); !assigned {
+		return false, true, msgErr("not_assigned_digital", nil, "not assigned to an enabled digital input channel")
+	}
+	m.mu.Lock()
+	lines := m.lines
+	idx, wired := m.portIndex[d]
+	liveSince, lastOpenErr := m.liveSince, m.lastOpenErr
+	m.mu.Unlock()
+	if lines == nil || !wired {
+		grace := sensorMaxAge(snap.Safety.SensorMaxAge, time.Second)
+		if liveSince.IsZero() || time.Since(liveSince) < grace {
+			return false, true, ErrSensorPending
+		}
+		return false, true, withLastErr(msg("gpio_not_open", map[string]any{"chip": cfg.Chip}, "GPIO input not open on %s", cfg.Chip), lastOpenErr)
+	}
+	bits, err := lines.GetValues()
+	if err != nil {
+		return false, true, &msgError{Message: msg("gpio_read_failed", map[string]any{"detail": err.Error()}, "GPIO read: %v", err), wrapped: err}
+	}
+	return bits&(uint64(1)<<uint(idx)) != 0, true, nil
 }
 
 // SetSimValue adjusts one channel's simulated level in real time (e.g.

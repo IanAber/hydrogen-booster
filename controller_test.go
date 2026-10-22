@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -233,14 +234,14 @@ func TestOutputPressureFilterDisabledByDefaultPassesThroughRaw(t *testing.T) {
 
 // TestSuperviseSafetyChecksRawOutputPressureEvenWhenFiltered confirms
 // the deliberate design choice documented on
-// Config.OutputPressureFilterSamples: the MaxHydrogenPressureBar safety
+// Config.OutputPressureFilterSamples: the OutputPressure max limit safety
 // check must never be masked by output pressure filtering, the same
 // principle MaxStrokeTime already relies on for the hydraulic pressure
 // filters.
 func TestSuperviseSafetyChecksRawOutputPressureEvenWhenFiltered(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.OutputPressureFilterSamples = 5 // aggressive filtering, would mask a single-sample spike
-	cfg.Safety.MaxHydrogenPressureBar = 50
+	cfg.Safety.Limits[OutputPressure].Max = 50
 	live := NewLiveConfig(cfg)
 	io := NewSimulatedIO()
 	defer io.Close()
@@ -277,6 +278,28 @@ func TestSuperviseSafetyFaultsOnLowHydraulicOil(t *testing.T) {
 
 	if got := c.Status().Phase; got != PhaseFault {
 		t.Fatalf("phase = %v, want fault", got)
+	}
+}
+
+func TestSuperviseSafetyFaultsOnHydrogenDetected(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	_ = io.SetRelay(Pump1, true)
+	io.digitalInputs[HydrogenDetected] = true
+	c.superviseSafety()
+	c.tickFans(time.Now())
+
+	if got := c.Status().Phase; got != PhaseFault {
+		t.Fatalf("phase = %v, want fault", got)
+	}
+	if on, _ := io.RelayState(Pump1); on {
+		t.Fatal("Pump1 should be stopped by the hydrogen fault")
+	}
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should keep running through the hydrogen fault")
 	}
 }
 
@@ -355,7 +378,7 @@ func TestStartRejectsCodeNotOnAllowList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.SetAll([]CodeEntry{{Code: "5551234567", Name: "Jane Doe"}}); err != nil {
+	if err := v.SetAll([]CodeEntry{{Code: "5551234567", CustomerID: "CUST-1", Name: "Jane Doe"}}); err != nil {
 		t.Fatal(err)
 	}
 	c.SetValidCodes(v)
@@ -378,7 +401,7 @@ func TestStartAllowsEmptyCodeEvenWithAllowListConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := v.SetAll([]CodeEntry{{Code: "5551234567", Name: "Jane Doe"}}); err != nil {
+	if err := v.SetAll([]CodeEntry{{Code: "5551234567", CustomerID: "CUST-1", Name: "Jane Doe"}}); err != nil {
 		t.Fatal(err)
 	}
 	c.SetValidCodes(v)
@@ -390,7 +413,16 @@ func TestStartAllowsEmptyCodeEvenWithAllowListConfigured(t *testing.T) {
 	}
 }
 
-func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
+func newTestDispenseStore(t *testing.T) *DispenseStore {
+	d, err := NewDispenseStore(t.TempDir() + "/dispenses.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	return d
+}
+
+func TestCompletedJobIsRecordedWithCustomerNotCode(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MassMeasurementEnabled = true
 	live := NewLiveConfig(cfg)
@@ -398,8 +430,17 @@ func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	d := NewDispenseLog(t.TempDir() + "/dispense-log.jsonl")
-	c.SetDispenseLog(d)
+	d := newTestDispenseStore(t)
+	c.SetDispenseStore(d)
+	v, err := LoadValidCodes(t.TempDir() + "/valid-codes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetAll([]CodeEntry{{Code: "5551234567", CustomerID: "ACME-001", Name: "Acme Haulage"}}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetValidCodes(v)
+	logBuf := captureLog(t, false)
 
 	if err := c.Start(JobRequest{TargetPressureBar: 6, TargetMassKg: 999, Nozzle: Nozzle350, CustomerCode: "5551234567"}); err != nil {
 		t.Fatal(err)
@@ -412,15 +453,21 @@ func TestCompletedJobIsRecordedInDispenseLog(t *testing.T) {
 		t.Fatalf("phase = %v, want complete", got)
 	}
 
-	records, err := d.DrainAll()
+	records, err := d.Query(time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(records) != 1 {
 		t.Fatalf("got %d records, want 1", len(records))
 	}
-	if records[0].CustomerCode != "5551234567" {
-		t.Errorf("CustomerCode = %q, want 5551234567", records[0].CustomerCode)
+	if records[0].CustomerID != "ACME-001" || records[0].CustomerName != "Acme Haulage" {
+		t.Errorf("record = %+v, want customer ACME-001 / Acme Haulage", records[0])
+	}
+	if strings.Contains(logBuf.String(), "5551234567") {
+		t.Errorf("the login code must never be logged:\n%s", logBuf.String())
+	}
+	if !strings.Contains(logBuf.String(), "customer ACME-001 (Acme Haulage)") {
+		t.Errorf("the job log line should name the customer by ID:\n%s", logBuf.String())
 	}
 	if records[0].DeliveredMassKg <= 0 {
 		t.Errorf("DeliveredMassKg = %v, want > 0", records[0].DeliveredMassKg)
@@ -438,8 +485,8 @@ func TestCompletedJobIsNotRecordedWhenMassMeasurementDisabled(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	d := NewDispenseLog(t.TempDir() + "/dispense-log.jsonl")
-	c.SetDispenseLog(d)
+	d := newTestDispenseStore(t)
+	c.SetDispenseStore(d)
 
 	if err := c.Start(JobRequest{TargetPressureBar: 6, TargetMassKg: 999, Nozzle: Nozzle350}); err != nil {
 		t.Fatal(err)
@@ -452,7 +499,7 @@ func TestCompletedJobIsNotRecordedWhenMassMeasurementDisabled(t *testing.T) {
 		t.Fatalf("phase = %v, want complete", got)
 	}
 
-	records, err := d.DrainAll()
+	records, err := d.Query(time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,15 +514,15 @@ func TestAbortedJobIsNotRecorded(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	d := NewDispenseLog(t.TempDir() + "/dispense-log.jsonl")
-	c.SetDispenseLog(d)
+	d := newTestDispenseStore(t)
+	c.SetDispenseStore(d)
 
 	if err := c.Start(JobRequest{TargetPressureBar: 350, TargetMassKg: 999, Nozzle: Nozzle350, CustomerCode: "5551234567"}); err != nil {
 		t.Fatal(err)
 	}
 	c.Stop()
 
-	records, err := d.DrainAll()
+	records, err := d.Query(time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +569,69 @@ func TestTickFansVentFanStaysOnDuringOffDelayThenDeenergises(t *testing.T) {
 	}
 }
 
-func TestTickFansCoolingFanStaysOffBelowSetpoint(t *testing.T) {
+func TestTickFansVentFanEnergisesOnHydrogenWithPumpsOff(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	io.digitalInputs[HydrogenDetected] = true
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should energise when hydrogen is detected, even with both pumps off")
+	}
+}
+
+func TestTickFansVentFanStaysOnDuringOffDelayAfterHydrogenClears(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.VentFan.OffDelay = 5 * time.Second
+	live := NewLiveConfig(cfg)
+	io := NewSimulatedIO()
+	defer io.Close()
+	c := NewController(live, io)
+
+	io.digitalInputs[HydrogenDetected] = true
+	start := time.Now()
+	c.tickFans(start)
+
+	io.digitalInputs[HydrogenDetected] = false
+	c.tickFans(start.Add(1 * time.Second))
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should still be energised - within the off delay after hydrogen cleared")
+	}
+
+	c.tickFans(start.Add(6 * time.Second))
+	if on, _ := io.RelayState(VentFan); on {
+		t.Fatal("VentFan should have de-energised once the off delay elapsed")
+	}
+}
+
+// failingH2IO reports a read fault on the hydrogen detector only.
+type failingH2IO struct{ *SimulatedIO }
+
+func (f failingH2IO) ReadDigitalInput(d DigitalInput) (bool, error) {
+	if d == HydrogenDetected {
+		return false, ErrSensorFault
+	}
+	return f.SimulatedIO.ReadDigitalInput(d)
+}
+
+func TestTickFansVentFanEnergisesOnHydrogenDetectorFault(t *testing.T) {
+	live := NewLiveConfig(DefaultConfig())
+	sim := NewSimulatedIO()
+	defer sim.Close()
+	io := failingH2IO{sim}
+	c := NewController(live, io)
+
+	c.tickFans(time.Now())
+
+	if on, _ := io.RelayState(VentFan); !on {
+		t.Fatal("VentFan should energise when the hydrogen detector can't be read (fail-safe)")
+	}
+}
+
+func TestTickFansCoolingFanRunsWithPumpsBelowSetpoint(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CoolingFan.SetpointC = 50
 	live := NewLiveConfig(cfg)
@@ -534,12 +643,18 @@ func TestTickFansCoolingFanStaysOffBelowSetpoint(t *testing.T) {
 	io.temps[HydOilTemp] = 40
 	c.tickFans(time.Now())
 
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should run whenever a pump is running, regardless of oil temperature")
+	}
+
+	_ = io.SetRelay(Pump1, false)
+	c.tickFans(time.Now())
 	if on, _ := io.RelayState(CoolingFan); on {
-		t.Fatal("CoolingFan should stay off while oil is below the setpoint")
+		t.Fatal("CoolingFan should turn off once the pumps stop with oil below the setpoint")
 	}
 }
 
-func TestTickFansCoolingFanTurnsOnAboveSetpointWhilePumpsRun(t *testing.T) {
+func TestTickFansCoolingFanStaysOffBelowSetpointWhilePumpsOff(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CoolingFan.SetpointC = 50
 	live := NewLiveConfig(cfg)
@@ -547,16 +662,15 @@ func TestTickFansCoolingFanTurnsOnAboveSetpointWhilePumpsRun(t *testing.T) {
 	defer io.Close()
 	c := NewController(live, io)
 
-	_ = io.SetRelay(Pump1, true)
-	io.temps[HydOilTemp] = 55
+	io.temps[HydOilTemp] = 40
 	c.tickFans(time.Now())
 
-	if on, _ := io.RelayState(CoolingFan); !on {
-		t.Fatal("CoolingFan should turn on once oil exceeds the setpoint while the pumps are running")
+	if on, _ := io.RelayState(CoolingFan); on {
+		t.Fatal("CoolingFan should stay off while the pumps are off and oil is below the setpoint")
 	}
 }
 
-func TestTickFansCoolingFanDoesNotTurnOnAboveSetpointWhilePumpsOff(t *testing.T) {
+func TestTickFansCoolingFanTurnsOnAboveSetpointWhilePumpsOff(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.CoolingFan.SetpointC = 50
 	live := NewLiveConfig(cfg)
@@ -568,8 +682,8 @@ func TestTickFansCoolingFanDoesNotTurnOnAboveSetpointWhilePumpsOff(t *testing.T)
 	io.temps[HydOilTemp] = 55
 	c.tickFans(time.Now())
 
-	if on, _ := io.RelayState(CoolingFan); on {
-		t.Fatal("CoolingFan should not turn on from temperature alone while the pumps aren't running")
+	if on, _ := io.RelayState(CoolingFan); !on {
+		t.Fatal("CoolingFan should turn on from temperature alone, even while the pumps aren't running")
 	}
 }
 
