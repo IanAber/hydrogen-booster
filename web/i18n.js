@@ -17,7 +17,9 @@
 // initI18n() reads it from GET /api/config once per page load.
 // setLanguage(lang) additionally lets admin.html preview a language
 // immediately, before Apply persists it.
+// noinspection RegExpRedundantEscape
 
+// language=TEXT
 const I18N = {
   en: {
     admin_has_700: "System has a 700 bar nozzle", admin_has_700_hint: "untick for a 350 bar-only system: the 700 bar option is hidden and fills are capped at 350 bar.", admin_nozzle_sensors: "Use nozzle proximity sensors", admin_nozzle_sensors_hint: "select the nozzle automatically from the Nozzle350InUse/Nozzle700InUse digital inputs (1 = lifted) instead of a button. Exactly one nozzle must be lifted to start.", opt_nozzle350_in_use: "350 bar nozzle lifted", opt_nozzle700_in_use: "700 bar nozzle lifted", admin_nozzle_lifted: "Lifted", admin_nozzle_returned: "Returned", diag_input_nozzle350: "350 Bar Nozzle", diag_input_nozzle700: "700 Bar Nozzle", idx_nozzle_auto_hint: "Selected automatically from the lifted nozzle.",
@@ -1273,6 +1275,17 @@ function t(key) {
 // nested Message, translated recursively; anything else is shown as
 // is. Falls back to the message's own English text when its code has
 // no template (e.g. a raw driver error).
+/**
+ * @typedef {Object} Message
+ * @property {string} [code]
+ * @property {string} [text]
+ * @property {Object<string, *>} [params]
+ */
+/**
+ * @param {Message|string} m
+ * @param {boolean} [nested]
+ * @returns {string}
+ */
 function translateMessage(m, nested) {
   if (!m) return '';
   if (typeof m === 'string') return m;
